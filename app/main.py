@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from twilio.twiml.messaging_response import MessagingResponse
@@ -208,6 +209,8 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, au
             reply = translate_for_patient(reply_english, current_profile["preferred_language"])
             repository.add_message(conversation["id"], "bot", "text", reply, reply_english)
             return reply
+        if not reply_english or not reply_english.strip():
+            reply_english = "I am having trouble processing that. Can you please repeat?"
 
         if "[INTERVIEW_COMPLETE]" in reply_english:
             summary_text, medical_brief = generate_case_summary(current_profile, db_messages)
@@ -273,14 +276,16 @@ def health() -> dict[str, str]:
     return {"status": "MedTalk running"}
 
 
-@app.post("/webhook", response_class=PlainTextResponse)
+@app.post("/webhook")
 async def webhook(
+    request: Request,
     From: str = Form(...),
     Body: str = Form(default=""),
     NumMedia: int = Form(default=0),
     MediaContentType0: str | None = Form(default=None),
     MediaUrl0: str | None = Form(default=None),
-) -> str:
+) -> Response:
+    form = dict(await request.form())
     phone = From.replace("whatsapp:", "")
     message_type = "text"
     incoming_text = Body.strip()
@@ -291,10 +296,22 @@ async def webhook(
         audio_url = MediaUrl0
         incoming_text = incoming_text or "Voice note received"
 
+    print(
+        f"Incoming webhook form={form!r} parsed_phone={phone!r} "
+        f"type={message_type!r} body={incoming_text!r} media_count={NumMedia!r}",
+        file=sys.stderr,
+        flush=True,
+    )
+
     reply_text = handle_patient_message(phone, incoming_text, message_type, audio_url)
+    if not reply_text or not reply_text.strip():
+        reply_text = "I am having trouble processing that. Please send RESET to restart."
+
     twiml = MessagingResponse()
     twiml.message(reply_text)
-    return str(twiml)
+    xml_response = str(twiml)
+    print(f"Outgoing webhook phone={phone!r} xml={xml_response!r}", file=sys.stderr, flush=True)
+    return Response(content=xml_response, media_type="text/xml")
 
 
 @app.get("/dashboard/{role}", response_class=HTMLResponse)
