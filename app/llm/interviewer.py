@@ -21,12 +21,6 @@ CRITICAL RULES:
 5. Once you have enough information to understand the chief complaint, duration, and severity, reply exactly with: "[INTERVIEW_COMPLETE]"
 """
 
-models = client.models.list()
-
-for m in models.data:
-    print(m.id)
-
-
 def get_next_question(user_message: str, chat_history: List[Dict[str, str]]) -> str:
     """
     Takes the new user message and the existing chat history,
