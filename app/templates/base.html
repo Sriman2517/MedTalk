@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MedTalk</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">MedTalk</p>
+            <h1>Multilingual Voice-First Triage</h1>
+        </div>
+        <nav>
+            <a href="/dashboard/gp">GP Queue</a>
+            <a href="/dashboard/specialist">Specialist Queue</a>
+        </nav>
+    </header>
+    <main class="page">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
