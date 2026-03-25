@@ -13,7 +13,6 @@ from app.config import settings
 from app.db import init_db
 from app.repository import Repository
 from app.triage import (
-    QUESTION_FLOW,
     build_audio_placeholder,
     detect_language,
     friendly_language_list,
@@ -105,7 +104,8 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, au
                 language=selected["preferred_language"],
                 context={**context, "interview_answers": {}, "interview_index": 0},
             )
-            reply = f"Patient selected: {selected['name']}.\n{get_question(0, selected['preferred_language'])}"
+            first_q = translate_for_patient("Please describe the main problem in one or two sentences.", selected['preferred_language'])
+            reply = f"Patient selected: {selected['name']}.\n{first_q}"
         elif choice == len(profiles) + 1:
             repository.update_conversation(conversation["id"], stage="profile_name", context=context)
             reply = "What is the new patient's name?"
@@ -161,7 +161,8 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, au
             language=selected_language,
             context={**context, "interview_answers": {}, "interview_index": 0},
         )
-        reply = f"Profile created for {draft['name']}.\n{get_question(0, selected_language)}"
+        first_q = translate_for_patient("Please describe the main problem in one or two sentences.", selected_language)
+        reply = f"Profile created for {draft['name']}.\n{first_q}"
         repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
@@ -171,44 +172,74 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, au
             reply = "Profile not found. Send RESET to start again."
             repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
-        interview_index = int(context.get("interview_index", 0))
-        field_name, _ = QUESTION_FLOW[interview_index]
-        context["interview_answers"][field_name] = text or "Voice note received"
-        interview_index += 1
-        context["interview_index"] = interview_index
-
-        if interview_index < len(QUESTION_FLOW):
-            repository.update_conversation(conversation["id"], stage="interview", language=current_profile["preferred_language"], context=context)
-            reply = get_question(interview_index, current_profile["preferred_language"])
-            repository.add_message(conversation["id"], "bot", "text", reply, reply)
+            
+        english_text = incoming_text if language == "en" else f"[English summary pending] {incoming_text}"
+        
+        if infer_urgency(english_text) == "emergency":
+            gp = repository.get_available_gp()
+            case_id = repository.create_case(
+                conversation["id"],
+                current_profile["id"],
+                f"🚨 EMERGENCY DETECTED: {english_text}",
+                "emergency",
+                "emergency_medicine",
+                gp["id"] if gp else None,
+            )
+            repository.update_conversation(
+                conversation["id"],
+                stage="queued_for_gp",
+                status="queued_for_gp",
+                language=current_profile["preferred_language"],
+                context=context,
+                active_case_id=case_id,
+            )
+            reply = translate_for_patient(
+                "[URGENT_RED_FLAG] We have detected a medical emergency. Your case is escalated immediately to a doctor.",
+                current_profile["preferred_language"],
+            )
+            repository.add_message(conversation["id"], "bot", "text", reply, "We have detected a medical emergency.")
             return reply
 
-        summary = generate_case_summary(current_profile, context["interview_answers"])
-        urgency = infer_urgency(summary)
-        specialty = infer_specialty(summary)
-        gp = repository.get_available_gp()
-        case_id = repository.create_case(
-            conversation["id"],
-            current_profile["id"],
-            summary,
-            urgency,
-            specialty,
-            gp["id"] if gp else None,
-        )
-        context["last_summary"] = summary
-        repository.update_conversation(
-            conversation["id"],
-            stage="queued_for_gp",
-            status="queued_for_gp",
-            language=current_profile["preferred_language"],
-            context=context,
-            active_case_id=case_id,
-        )
-        reply = translate_for_patient(
-            "Thank you. Your case has been prepared and sent to the general physician queue.",
-            current_profile["preferred_language"],
-        )
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
+        try:
+            db_messages = repository.list_messages(conversation["id"])
+            reply_english = get_question(english_text, db_messages)
+        except Exception:
+            reply_english = "I am having trouble processing that. Can you please repeat?"
+            reply = translate_for_patient(reply_english, current_profile["preferred_language"])
+            repository.add_message(conversation["id"], "bot", "text", reply, reply_english)
+            return reply
+
+        if "[INTERVIEW_COMPLETE]" in reply_english:
+            summary_text, medical_brief = generate_case_summary(current_profile, db_messages)
+            
+            urgency = "emergency" if medical_brief.get("red_flags_detected") else "routine"
+            specialty = infer_specialty(medical_brief)
+            gp = repository.get_available_gp()
+            
+            case_id = repository.create_case(
+                conversation["id"],
+                current_profile["id"],
+                summary_text,
+                urgency,
+                specialty,
+                gp["id"] if gp else None,
+            )
+            context["last_summary"] = summary_text
+            repository.update_conversation(
+                conversation["id"],
+                stage="queued_for_gp",
+                status="queued_for_gp",
+                language=current_profile["preferred_language"],
+                context=context,
+                active_case_id=case_id,
+            )
+            reply_english = "Thank you. Your case has been prepared and sent to the general physician queue."
+            reply = translate_for_patient(reply_english, current_profile["preferred_language"])
+            repository.add_message(conversation["id"], "bot", "text", reply, reply_english)
+            return reply
+
+        reply = translate_for_patient(reply_english, current_profile["preferred_language"])
+        repository.add_message(conversation["id"], "bot", "text", reply, reply_english)
         return reply
 
     if stage in {"queued_for_gp", "doctor_review", "referred"}:

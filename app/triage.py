@@ -12,80 +12,10 @@ SUPPORTED_LANGUAGES = {
     "ta": "Tamil",
 }
 
-QUESTION_FLOW = [
-    (
-        "chief_complaint",
-        {
-            "en": "Please describe the main problem in one or two sentences.",
-            "hi": "Kripya apni mukhya takleef ek ya do vakyon mein batayiye.",
-            "te": "Dayachesi mee mukhya samasya ni okati leka rendu vaakyalalo cheppandi.",
-            "ta": "Ungal mukkiya pirachanaiyai oru allathu rendu vakkiyangalil sollunga.",
-        },
-    ),
-    (
-        "duration",
-        {
-            "en": "How long have you had this problem?",
-            "hi": "Yeh takleef kitne samay se hai?",
-            "te": "Ee samasya entha kalam nundi undi?",
-            "ta": "Indha pirachanai evvalavu naal irukku?",
-        },
-    ),
-    (
-        "severity",
-        {
-            "en": "How severe is it right now on a scale from 1 to 10?",
-            "hi": "Abhi dard ya takleef 1 se 10 tak kitni hai?",
-            "te": "Ippudu ee ibbandi 1 nundi 10 varaku entha undi?",
-            "ta": "Ippozhudhu indha kashtam 1 mudhal 10 varai evvalavu?",
-        },
-    ),
-    (
-        "associated_symptoms",
-        {
-            "en": "Any other symptoms like fever, cough, vomiting, dizziness, or pain elsewhere?",
-            "hi": "Kya aur koi lakshan hain jaise bukhar, khansi, ulti, chakkar ya kahin aur dard?",
-            "te": "Jwaram, daggu, vanti, talatiragadam, leka vere chotla noppi laanti inka lakshanalu unnaya?",
-            "ta": "Kaichchal, irumal, vaandhi, mayakkam, allathu vera vali maadhiri innum lakshanangal ulladha?",
-        },
-    ),
-    (
-        "history",
-        {
-            "en": "Do you have any medical conditions, medicines, or allergies we should know about?",
-            "hi": "Koi purani bimaari, chal rahi dawai, ya allergy hai kya?",
-            "te": "Mee daggara unna rogalu, teesukuntunna mandulu, leka allergies emaina unnaya?",
-            "ta": "Ungalukku mun irundha noi, eduthukondirukkum marundhu, allathu allergy irukka?",
-        },
-    ),
-]
-
-RED_FLAG_PATTERNS = {
-    "emergency": [
-        "chest pain",
-        "trouble breathing",
-        "breathing difficulty",
-        "unconscious",
-        "stroke",
-        "severe bleeding",
-        "fits",
-        "seizure",
-    ],
-    "high": [
-        "high fever",
-        "vomiting continuously",
-        "dehydration",
-        "pregnant and bleeding",
-    ],
-}
-
-SPECIALTY_HINTS = {
-    "cardio": ["chest pain", "palpitation", "heart", "bp"],
-    "pulmonology": ["cough", "breathing", "asthma", "wheezing"],
-    "dermatology": ["rash", "itching", "skin", "eczema"],
-    "gastroenterology": ["stomach", "abdomen", "vomit", "diarrhea"],
-    "neurology": ["headache", "seizure", "stroke", "numbness", "dizziness"],
-}
+from app.llm.guardrails import check_for_red_flags
+from app.llm.interviewer import get_next_question
+from app.llm.summarizer import generate_medical_brief
+from app.llm.classifier import classify_specialty
 
 
 def detect_language(text: str | None) -> str:
@@ -152,45 +82,68 @@ def dump_context(context: dict[str, Any]) -> str:
     return json.dumps(merged)
 
 
-def get_question(index: int, language: str) -> str:
-    _, prompts = QUESTION_FLOW[index]
-    return prompts.get(language, prompts["en"])
+def get_question(user_message: str, db_messages: list[dict[str, Any]]) -> str:
+    chat_history = []
+    for msg in db_messages:
+        # Ignore unsupported roles or empty inputs if necessary
+        role = "user" if msg["sender_role"] == "patient" else "assistant"
+        content = msg.get("translated_text") or msg.get("original_text") or ""
+        chat_history.append({"role": role, "content": content})
+    
+    return get_next_question(user_message, chat_history)
 
 
 def infer_urgency(summary_text: str) -> str:
-    lowered = summary_text.lower()
-    for keyword in RED_FLAG_PATTERNS["emergency"]:
-        if keyword in lowered:
-            return "emergency"
-    for keyword in RED_FLAG_PATTERNS["high"]:
-        if keyword in lowered:
-            return "high"
+    is_emergency, _ = check_for_red_flags(summary_text)
+    if is_emergency:
+        return "emergency"
     return "routine"
 
 
-def infer_specialty(summary_text: str) -> str:
-    lowered = summary_text.lower()
-    for specialty, keywords in SPECIALTY_HINTS.items():
-        if any(keyword in lowered for keyword in keywords):
-            return specialty
+def infer_specialty(medical_brief_json: dict[str, Any]) -> str:
+    classification = classify_specialty(medical_brief_json)
+    rec = classification.get("recommended_specialty", "").lower()
+    
+    if "cardio" in rec:
+        return "cardio"
+    elif "pulmonol" in rec:
+        return "pulmonology"
+    elif "derm" in rec:
+        return "dermatology"
+    elif "gastro" in rec:
+        return "gastroenterology"
     return "general_medicine"
 
 
-def generate_case_summary(profile: dict[str, Any], interview_answers: dict[str, str]) -> str:
+def generate_case_summary(profile: dict[str, Any], db_messages: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    chat_history = []
+    for msg in db_messages:
+        role = "user" if msg["sender_role"] == "patient" else "assistant"
+        content = msg.get("translated_text") or msg.get("original_text") or ""
+        chat_history.append({"role": role, "content": content})
+        
+    medical_brief = generate_medical_brief(chat_history)
+    
+    assoc_symptoms = medical_brief.get("associated_symptoms", [])
+    symptoms_str = ", ".join(assoc_symptoms) if isinstance(assoc_symptoms, list) else str(assoc_symptoms)
+    
     lines = [
-        f"Patient: {profile['name']}, {profile['age']} years, {profile['gender']}.",
-        f"Preferred language: {SUPPORTED_LANGUAGES.get(profile['preferred_language'], 'English')}.",
-        f"Chief complaint: {interview_answers.get('chief_complaint', 'Not captured')}.",
-        f"Duration: {interview_answers.get('duration', 'Not captured')}.",
-        f"Severity: {interview_answers.get('severity', 'Not captured')}.",
-        f"Associated symptoms: {interview_answers.get('associated_symptoms', 'Not captured')}.",
-        f"History/medicines/allergies: {interview_answers.get('history', 'Not captured')}.",
+        f"Patient: {profile.get('name', 'Unknown')}, {profile.get('age', 'Unknown')} years, {profile.get('gender', 'Unknown')}.",
+        f"Preferred language: {SUPPORTED_LANGUAGES.get(profile.get('preferred_language', 'en'), 'English')}.",
+        f"Chief complaint: {medical_brief.get('chief_complaint', 'Not captured')}.",
+        f"Duration: {medical_brief.get('duration', 'Not captured')}.",
+        f"Severity: {medical_brief.get('severity', 'Not captured')}.",
+        f"Associated symptoms: {symptoms_str}.",
+        f"Narrative: {medical_brief.get('patient_narrative', 'Not captured')}.",
     ]
-    urgency = infer_urgency(" ".join(lines))
-    specialty = infer_specialty(" ".join(lines))
+    
+    urgency = "emergency" if medical_brief.get("red_flags_detected") else "routine"
+    specialty = infer_specialty(medical_brief)
+    
     lines.append(f"Urgency: {urgency}.")
     lines.append(f"Suggested specialty: {specialty}.")
-    return "\n".join(lines)
+    
+    return "\n".join(lines), medical_brief
 
 
 def translate_for_patient(text: str, language: str) -> str:
