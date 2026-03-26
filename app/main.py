@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -13,11 +16,13 @@ from twilio.twiml.messaging_response import MessagingResponse
 from app.config import settings
 from app.db import init_db
 from app.repository import Repository
+from app.sensory.transcriber import transcribe_audio
+from app.sensory.vision import analyze_symptom_image
 from app.triage import (
-    build_audio_placeholder,
     detect_language,
     friendly_language_list,
     generate_case_summary,
+    generate_real_audio,
     get_question,
     infer_specialty,
     infer_urgency,
@@ -26,12 +31,28 @@ from app.triage import (
     translate_for_patient,
 )
 
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://YOUR-NGROK-URL")
+
 app = FastAPI(title=settings.app_name)
 repository = Repository(settings.database_path)
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+async def download_twilio_media(media_url: str, suffix: str) -> str:
+    downloads_dir = BASE_DIR / "static" / "downloads"
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}{suffix}"
+    local_path = downloads_dir / filename
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(media_url)
+        response.raise_for_status()
+        with open(local_path, "wb") as f:
+            f.write(response.content)
+            
+    return str(local_path)
 
 
 def profile_menu(profiles: list[dict[str, Any]]) -> str:
@@ -291,10 +312,25 @@ async def webhook(
     incoming_text = Body.strip()
     audio_url = None
 
-    if NumMedia > 0 and MediaContentType0 and "audio" in MediaContentType0:
-        message_type = "audio"
-        audio_url = MediaUrl0
-        incoming_text = incoming_text or "Voice note received"
+    if NumMedia > 0 and MediaContentType0:
+        if "audio" in MediaContentType0:
+            message_type = "audio"
+            audio_url = MediaUrl0
+            try:
+                local_file = await download_twilio_media(MediaUrl0, ".ogg")
+                incoming_text = transcribe_audio(local_file)
+            except Exception as e:
+                print(f"Audio processing error: {e}", file=sys.stderr)
+                incoming_text = incoming_text or "Voice note received but could not be transcribed."
+        elif "image" in MediaContentType0:
+            message_type = "image"
+            try:
+                local_file = await download_twilio_media(MediaUrl0, ".jpg")
+                vision_analysis = analyze_symptom_image(local_file)
+                incoming_text = f"[Patient uploaded an image. Vision Analysis: {vision_analysis}]"
+            except Exception as e:
+                print(f"Image processing error: {e}", file=sys.stderr)
+                incoming_text = "[Patient uploaded an image. Analysis failed.]"
 
     print(
         f"Incoming webhook form={form!r} parsed_phone={phone!r} "
@@ -308,7 +344,13 @@ async def webhook(
         reply_text = "I am having trouble processing that. Please send RESET to restart."
 
     twiml = MessagingResponse()
-    twiml.message(reply_text)
+    msg = twiml.message(reply_text)
+    
+    lang = detect_language(reply_text)
+    audio_path_url = generate_real_audio(reply_text, lang)
+    if audio_path_url:
+        msg.media(f"{PUBLIC_BASE_URL}{audio_path_url}")
+
     xml_response = str(twiml)
     print(f"Outgoing webhook phone={phone!r} xml={xml_response!r}", file=sys.stderr, flush=True)
     return Response(content=xml_response, media_type="text/xml")
@@ -353,7 +395,7 @@ def reply_case(case_id: int, doctor_id: int = Form(...), english_reply: str = Fo
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     translated_reply = translate_for_patient(english_reply, case["patient_language"])
-    audio_url = build_audio_placeholder(english_reply, case["patient_language"])
+    audio_url = generate_real_audio(translated_reply, case["patient_language"])
     completion = repository.complete_case(case_id, doctor_id, english_reply, translated_reply, audio_url)
     repository.add_message(completion["conversation_id"], "doctor", "text", translated_reply, english_reply, audio_url)
     return RedirectResponse(url=f"/cases/{case_id}", status_code=303)

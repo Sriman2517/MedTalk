@@ -153,5 +153,21 @@ def translate_for_patient(text: str, language: str) -> str:
     return f"[{SUPPORTED_LANGUAGES[language]}] {text}"
 
 
-def build_audio_placeholder(text: str, language: str) -> str:
-    return f"tts://{normalize_language(language)}/{abs(hash(text))}"
+def generate_real_audio(text: str, language: str) -> str:
+    from app.sensory.synthesizer import generate_audio_reply
+    from pathlib import Path
+    
+    BASE_DIR = Path(__file__).resolve().parent
+    audio_dir = BASE_DIR / "static" / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    
+    file_name = f"{abs(hash(text))}.mp3"
+    absolute_path = str(audio_dir / file_name)
+    
+    try:
+        generate_audio_reply(text, normalize_language(language), absolute_path)
+    except Exception as e:
+        print(f"TTS error: {e}")
+        return ""
+        
+    return f"/static/audio/{file_name}"
