@@ -170,6 +170,16 @@ class Repository:
         assigned_doctor_id: int | None,
     ) -> int:
         with transaction(self.database_path) as connection:
+            connection.execute(
+                """
+                UPDATE cases
+                SET status = 'superseded',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE patient_profile_id = ?
+                  AND status IN ('queued_for_gp', 'referred', 'doctor_review')
+                """,
+                (patient_profile_id,),
+            )
             cursor = connection.execute(
                 """
                 INSERT INTO cases(
