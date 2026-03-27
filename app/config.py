@@ -17,6 +17,9 @@ class Settings:
     auth_secret_key: str = os.getenv("AUTH_SECRET_KEY", "change-this-in-env")
     auth_cookie_name: str = os.getenv("AUTH_COOKIE_NAME", "medtalk_session")
     auth_cookie_secure: bool = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
+    admin_email: str = os.getenv("ADMIN_EMAIL", "")
+    admin_password: str = os.getenv("ADMIN_PASSWORD", "")
+    admin_full_name: str = os.getenv("ADMIN_FULL_NAME", "MedTalk Admin")
 
 
 settings = Settings()

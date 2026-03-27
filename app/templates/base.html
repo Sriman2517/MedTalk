@@ -10,26 +10,90 @@
     <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-    <header class="topbar">
-        <div class="brand">
-            <p class="eyebrow">MedTalk</p>
-            <h1>Multilingual Voice-First Triage</h1>
-        </div>
-        <nav>
-            {% if current_user %}
-            <a href="/dashboard/{{ current_user.role }}">{{ "GP Queue" if current_user.role == "gp" else "Specialist Queue" }}</a>
-            <span class="user-chip">{{ current_user.full_name }} | {{ current_user.role|upper }}</span>
-            <form method="post" action="/logout" class="inline-form">
-                <button class="button secondary" type="submit">Logout</button>
-            </form>
-            {% else %}
-            <a href="/login">Login</a>
-            <a href="/register">Register</a>
-            {% endif %}
-        </nav>
-    </header>
-    <main class="page">
+    {% set page_content %}
         {% block content %}{% endblock %}
-    </main>
+    {% endset %}
+    {% if current_user %}
+    <div class="app-shell">
+        <aside class="sidebar">
+            <a class="sidebar-brand" href="/dashboard/{{ current_user.role }}">
+                <p class="eyebrow">MedTalk</p>
+                <h1>MedTalk</h1>
+                <p class="sidebar-copy">Voice-first multilingual triage for fast and trustworthy care coordination.</p>
+            </a>
+            <nav class="sidebar-nav">
+                <a class="nav-link {% if '/dashboard/' in request.url.path %}active{% endif %}" href="{{ '/dashboard/admin' if current_user.role == 'admin' else '/dashboard/' ~ current_user.role }}">
+                    {% if current_user.role == "gp" %}
+                    General Physician Queue
+                    {% elif current_user.role == "specialist" %}
+                    Specialist Queue
+                    {% else %}
+                    Admin Control Room
+                    {% endif %}
+                </a>
+                <a class="nav-link {% if request.url.path == '/profile' %}active{% endif %}" href="/profile">Profile</a>
+            </nav>
+            <div class="sidebar-foot">
+                <p class="eyebrow">Care Flow</p>
+                <p class="meta">Patient intake, AI-supported triage, doctor review, and multilingual follow-up in one workspace.</p>
+            </div>
+        </aside>
+        <div class="app-main">
+            <header class="topbar">
+                <div class="brand">
+                    <p class="eyebrow">MedTalk</p>
+                    <h1>{% if current_user.role == "admin" %}Admin Workspace{% else %}Doctor Workspace{% endif %}</h1>
+                </div>
+                <div class="topbar-actions">
+                    <details class="profile-menu">
+                        <summary class="profile-trigger">
+                            <span class="profile-avatar">{{ current_user.full_name[:1] }}</span>
+                            <span>
+                                <strong>{{ current_user.full_name }}</strong>
+                                <small>{{ current_user.role|upper }}</small>
+                            </span>
+                        </summary>
+                        <div class="profile-dropdown">
+                            <a href="/profile">Profile Page</a>
+                            <a href="{{ '/dashboard/admin' if current_user.role == 'admin' else '/dashboard/' ~ current_user.role }}">
+                                {% if current_user.role == "admin" %}Admin Dashboard{% else %}My Queue{% endif %}
+                            </a>
+                            <form method="post" action="/logout" class="stackless">
+                                <button class="dropdown-button" type="submit">Logout</button>
+                            </form>
+                        </div>
+                    </details>
+                </div>
+            </header>
+            <main class="page">
+                {{ page_content|safe }}
+            </main>
+            <footer class="footer">
+                <p>MedTalk</p>
+                <p class="meta">Multilingual Voice-First Triage for compassionate, continuous care.</p>
+            </footer>
+        </div>
+    </div>
+    {% else %}
+    <div class="public-shell">
+        <header class="topbar public-topbar">
+            <a class="sidebar-brand public-brand" href="/">
+                <p class="eyebrow">MedTalk</p>
+                <h1>MedTalk</h1>
+            </a>
+            <nav class="public-nav">
+                <a href="/login">Login</a>
+                <a href="/register">Register</a>
+            </nav>
+        </header>
+        <main class="page auth-page">
+            {{ page_content|safe }}
+        </main>
+        <footer class="footer public-footer">
+            <p>MedTalk</p>
+            <p class="meta">Voice-first triage designed for trust, access, and multilingual care.</p>
+        </footer>
+    </div>
+    {% endif %}
 </body>
 </html>

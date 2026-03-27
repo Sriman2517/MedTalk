@@ -12,6 +12,12 @@
     </div>
 </section>
 
+{% if ownership_status == "sent" %}
+<p class="summary-note success-note">The patient has been notified that a doctor is now reviewing this case.</p>
+{% elif ownership_status == "failed" %}
+<p class="summary-note warning-note">The doctor took ownership of this case, but the patient confidence update could not be delivered on WhatsApp.</p>
+{% endif %}
+
 <section class="two-col">
     <article class="panel">
         <h3>Clinical Summary</h3>
@@ -27,12 +33,18 @@
     </article>
 
     <article class="panel">
-        <h3>Conversation</h3>
+        <h3>Past Case Summaries</h3>
         <div class="timeline">
-            {% for message in messages %}
+            {% for past_case in patient_history %}
             <div class="timeline-item">
-                <p><strong>{{ message.sender_role|title }}</strong> | {{ message.message_type }}</p>
-                <p>{{ message.original_text or "-" }}</p>
+                <p><strong>Case #{{ past_case.id }}</strong> | {{ past_case.created_at }}</p>
+                <p class="meta">{{ past_case.urgency|upper }} | {{ past_case.specialty_hint }} | {{ past_case.status }}</p>
+                <pre>{{ past_case.summary_english }}</pre>
+            </div>
+            {% else %}
+            <div class="timeline-item">
+                <p><strong>No earlier summaries</strong></p>
+                <p class="meta">This is the first saved case summary for this patient profile.</p>
             </div>
             {% endfor %}
         </div>
@@ -42,14 +54,34 @@
 <section class="two-col">
     <article class="panel">
         <h3>Reply To Patient</h3>
+        {% if delivery_status == "failed" %}
+        <p class="summary-note warning-note">The doctor reply was saved, but WhatsApp delivery failed. This often happens when the Twilio sandbox limit is reached. You can still read and share the patient copy below.</p>
+        {% elif delivery_status == "sent" %}
+        <p class="summary-note success-note">Doctor reply saved and sent to the patient's WhatsApp.</p>
+        {% endif %}
         {% if case.status == "responded" and latest_response %}
         <p><strong>{{ latest_response.doctor_name }}</strong> replied:</p>
-        <p>{{ latest_response.english_reply }}</p>
-        <p class="meta">Patient copy: {{ latest_response.translated_reply }}</p>
+        <div class="reply-block">
+            <p class="reply-label">Doctor draft in English</p>
+            <pre>{{ latest_response.english_reply }}</pre>
+        </div>
+        <div class="reply-block muted-block">
+            <p class="reply-label">Patient copy</p>
+            <pre>{{ latest_response.translated_reply }}</pre>
+        </div>
         {% else %}
         <form method="post" action="/cases/{{ case.id }}/reply" class="stack">
-            <label for="english_reply">Reply in English</label>
-            <textarea id="english_reply" name="english_reply" rows="6" placeholder="Share the advice or next step for the patient." required></textarea>
+            <div class="form-section">
+                <label for="possible_cause">1. Possible Cause / Reason</label>
+                <p class="field-help">Explain what may be causing the symptoms in simple, patient-friendly language. Avoid jargon and avoid sounding completely certain.</p>
+                <textarea id="possible_cause" name="possible_cause" rows="5" placeholder="Example: These symptoms may be happening because of a stomach infection, food irritation, or another short-term illness. Based on what you shared, it does not yet clearly point to only one cause." required></textarea>
+            </div>
+            <div class="form-section">
+                <label for="care_plan">2. Care Plan</label>
+                <p class="field-help">Include medicines, how to use them, home care guidance, when improvement may happen, and when to seek help again.</p>
+                <textarea id="care_plan" name="care_plan" rows="7" placeholder="Example: Take the prescribed medicine after food as advised. Drink plenty of fluids, rest well, and avoid spicy food for now. You may start feeling better over the next few days with proper treatment. If pain becomes severe, fever continues, or new symptoms appear, please seek medical care again." required></textarea>
+            </div>
+            <p class="summary-note">This reply will be translated for the patient and should feel clear, warm, and medically safe.</p>
             <button class="button" type="submit">Send Reply</button>
         </form>
         {% endif %}

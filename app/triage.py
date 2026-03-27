@@ -273,6 +273,7 @@ def default_context() -> dict[str, Any]:
         "draft_profile": {},
         "interview_answers": {},
         "interview_index": 0,
+        "chat_turns": [],
         "last_summary": None,
         "temp_symptom": None,
         "temp_detected_language": None,
@@ -300,6 +301,12 @@ def dump_context(context: dict[str, Any]) -> str:
 def build_chat_history(db_messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     chat_history: list[dict[str, str]] = []
     for msg in db_messages:
+        if "role" in msg and "content" in msg:
+            content = str(msg.get("content", "")).strip()
+            role = str(msg.get("role", "")).strip()
+            if content and role in {"user", "assistant"}:
+                chat_history.append({"role": role, "content": content})
+            continue
         sender_role = msg.get("sender_role")
         if sender_role == "patient":
             role = "user"

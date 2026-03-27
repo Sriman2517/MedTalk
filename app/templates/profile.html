@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+    <div>
+        <p class="eyebrow">Doctor Profile</p>
+        <h2>{{ current_user.full_name }}</h2>
+        <p class="meta">Role: {{ "General Physician" if current_user.role == "gp" else "Specialist" }}</p>
+    </div>
+</section>
+
+<section class="two-col">
+    <article class="panel">
+        <h3>Professional Details</h3>
+        <div class="profile-grid">
+            <div class="profile-item">
+                <span class="profile-label">Full name</span>
+                <strong>{{ current_user.full_name }}</strong>
+            </div>
+            <div class="profile-item">
+                <span class="profile-label">Email</span>
+                <strong>{{ current_user.email }}</strong>
+            </div>
+            <div class="profile-item">
+                <span class="profile-label">Role</span>
+                <strong>{{ "General Physician" if current_user.role == "gp" else "Specialist" }}</strong>
+            </div>
+            <div class="profile-item">
+                <span class="profile-label">Specialty</span>
+                <strong>{{ doctor.specialty if doctor and doctor.specialty else current_user.specialty }}</strong>
+            </div>
+            <div class="profile-item">
+                <span class="profile-label">Hospital / Organization</span>
+                <strong>{{ doctor.organization if doctor and doctor.organization else "Not added yet" }}</strong>
+            </div>
+            <div class="profile-item">
+                <span class="profile-label">Location</span>
+                <strong>{{ doctor.location if doctor and doctor.location else "Not added yet" }}</strong>
+            </div>
+        </div>
+    </article>
+
+    <article class="panel">
+        <h3>Workspace Notes</h3>
+        <p class="summary-note">Your current queue, case ownership alerts, and structured patient replies are all connected to this doctor account.</p>
+        <div class="profile-grid">
+            <div class="profile-item">
+                <span class="profile-label">Queue Access</span>
+                <strong>{{ "General Physician Queue" if current_user.role == "gp" else "Specialist Queue" }}</strong>
+            </div>
+            <div class="profile-item">
+                <span class="profile-label">Case Alerts</span>
+                <strong>Ownership and reply notifications enabled</strong>
+            </div>
+        </div>
+    </article>
+</section>
+{% endblock %}

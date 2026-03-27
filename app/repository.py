@@ -54,6 +54,26 @@ class Repository:
             )
             return int(user_cursor.lastrowid)
 
+    def ensure_admin_user(
+        self,
+        *,
+        full_name: str,
+        email: str,
+        password_hash: str,
+        password_salt: str,
+    ) -> int:
+        existing = self.get_user_by_email(email)
+        if existing:
+            return int(existing["id"])
+        return self.create_user(
+            full_name=full_name,
+            email=email,
+            password_hash=password_hash,
+            password_salt=password_salt,
+            role="admin",
+            specialty="admin",
+        )
+
     def get_user_by_email(self, email: str) -> dict[str, Any] | None:
         with transaction(self.database_path) as connection:
             row = connection.execute(
@@ -75,6 +95,18 @@ class Repository:
                 WHERE id = ?
                 """,
                 (user_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_doctor(self, doctor_id: int) -> dict[str, Any] | None:
+        with transaction(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT id, name, role, specialty, organization, location, available
+                FROM doctors
+                WHERE id = ?
+                """,
+                (doctor_id,),
             ).fetchone()
             return dict(row) if row else None
 
@@ -328,6 +360,21 @@ class Repository:
             ).fetchone()
             return dict(row) if row else None
 
+    def list_patient_case_history(self, patient_profile_id: int, exclude_case_id: int | None = None) -> list[dict[str, Any]]:
+        query = """
+            SELECT id, summary_english, urgency, specialty_hint, status, created_at
+            FROM cases
+            WHERE patient_profile_id = ?
+        """
+        params: list[Any] = [patient_profile_id]
+        if exclude_case_id is not None:
+            query += " AND id != ?"
+            params.append(exclude_case_id)
+        query += " ORDER BY created_at DESC"
+        with transaction(self.database_path) as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [dict(row) for row in rows]
+
     def list_messages(self, conversation_id: int) -> list[dict[str, Any]]:
         with transaction(self.database_path) as connection:
             rows = connection.execute(
@@ -345,7 +392,7 @@ class Repository:
         with transaction(self.database_path) as connection:
             rows = connection.execute(
                 """
-                SELECT doctors.id, doctors.name, doctors.role, doctors.specialty, doctors.available
+                SELECT doctors.id, doctors.name, doctors.role, doctors.specialty, doctors.organization, doctors.location, doctors.available
                 FROM doctors
                 JOIN users ON users.doctor_id = doctors.id
                 WHERE doctors.role = ?
@@ -355,6 +402,42 @@ class Repository:
                 (role,),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def has_ownership_notification(self, case_id: int, doctor_id: int, notification_role: str) -> bool:
+        with transaction(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                FROM ownership_notifications
+                WHERE case_id = ? AND doctor_id = ? AND notification_role = ?
+                LIMIT 1
+                """,
+                (case_id, doctor_id, notification_role),
+            ).fetchone()
+            return row is not None
+
+    def record_ownership_notification(
+        self,
+        case_id: int,
+        doctor_id: int,
+        notification_role: str,
+        delivery_status: str,
+        delivery_error: str | None = None,
+    ) -> None:
+        with transaction(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO ownership_notifications(
+                    case_id,
+                    doctor_id,
+                    notification_role,
+                    delivery_status,
+                    delivery_error
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (case_id, doctor_id, notification_role, delivery_status, delivery_error),
+            )
 
     def refer_case(self, case_id: int, specialist_id: int, referral_note: str) -> None:
         with transaction(self.database_path) as connection:
@@ -419,3 +502,131 @@ class Repository:
         with transaction(self.database_path) as connection:
             row = connection.execute("SELECT context_json FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
             return load_context(row["context_json"]) if row else load_context("{}")
+
+    def get_admin_metrics(self) -> dict[str, Any]:
+        with transaction(self.database_path) as connection:
+            phones = connection.execute("SELECT COUNT(*) AS count FROM phones").fetchone()["count"]
+            profiles = connection.execute("SELECT COUNT(*) AS count FROM patient_profiles").fetchone()["count"]
+            active_intakes = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM conversations
+                WHERE status = 'active'
+                  AND stage IN ('start', 'profile_select', 'profile_name', 'profile_age', 'profile_gender', 'profile_language', 'interview', 'confirm_language_switch')
+                """
+            ).fetchone()["count"]
+            waiting_patients = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM cases
+                WHERE status IN ('queued_for_gp', 'referred')
+                """
+            ).fetchone()["count"]
+            completed_cases = connection.execute(
+                "SELECT COUNT(*) AS count FROM cases WHERE status = 'responded'"
+            ).fetchone()["count"]
+            open_high = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM cases
+                WHERE urgency = 'high' AND status IN ('queued_for_gp', 'referred')
+                """
+            ).fetchone()["count"]
+            open_medium = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM cases
+                WHERE urgency = 'medium' AND status IN ('queued_for_gp', 'referred')
+                """
+            ).fetchone()["count"]
+            total_doctors = connection.execute(
+                "SELECT COUNT(*) AS count FROM users WHERE is_active = 1 AND role IN ('gp', 'specialist')"
+            ).fetchone()["count"]
+            gps = connection.execute(
+                "SELECT COUNT(*) AS count FROM users WHERE is_active = 1 AND role = 'gp'"
+            ).fetchone()["count"]
+            specialists = connection.execute(
+                "SELECT COUNT(*) AS count FROM users WHERE is_active = 1 AND role = 'specialist'"
+            ).fetchone()["count"]
+            return {
+                "phones": phones,
+                "profiles": profiles,
+                "active_intakes": active_intakes,
+                "waiting_patients": waiting_patients,
+                "completed_cases": completed_cases,
+                "open_high": open_high,
+                "open_medium": open_medium,
+                "total_doctors": total_doctors,
+                "gps": gps,
+                "specialists": specialists,
+            }
+
+    def list_admin_recent_cases(self, limit: int = 10) -> list[dict[str, Any]]:
+        with transaction(self.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    cases.id,
+                    cases.urgency,
+                    cases.status,
+                    cases.specialty_hint,
+                    cases.created_at,
+                    patient_profiles.name AS patient_name,
+                    patient_profiles.preferred_language AS patient_language,
+                    gp.name AS gp_name,
+                    specialist.name AS specialist_name
+                FROM cases
+                JOIN patient_profiles ON patient_profiles.id = cases.patient_profile_id
+                LEFT JOIN doctors AS gp ON gp.id = cases.assigned_doctor_id
+                LEFT JOIN doctors AS specialist ON specialist.id = cases.assigned_specialist_id
+                ORDER BY cases.created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_doctor_workloads(self) -> list[dict[str, Any]]:
+        with transaction(self.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    doctors.id,
+                    doctors.name,
+                    doctors.role,
+                    doctors.specialty,
+                    doctors.available,
+                    SUM(
+                        CASE
+                            WHEN doctors.role = 'gp'
+                                 AND cases.assigned_doctor_id = doctors.id
+                                 AND cases.status = 'queued_for_gp' THEN 1
+                            WHEN doctors.role = 'specialist'
+                                 AND cases.assigned_specialist_id = doctors.id
+                                 AND cases.status = 'referred' THEN 1
+                            ELSE 0
+                        END
+                    ) AS active_cases,
+                    SUM(
+                        CASE
+                            WHEN doctors.role = 'gp'
+                                 AND cases.assigned_doctor_id = doctors.id
+                                 AND cases.status = 'responded' THEN 1
+                            WHEN doctors.role = 'specialist'
+                                 AND cases.assigned_specialist_id = doctors.id
+                                 AND cases.status = 'responded' THEN 1
+                            ELSE 0
+                        END
+                    ) AS completed_cases
+                FROM doctors
+                JOIN users ON users.doctor_id = doctors.id
+                LEFT JOIN cases
+                    ON cases.assigned_doctor_id = doctors.id
+                    OR cases.assigned_specialist_id = doctors.id
+                WHERE users.is_active = 1
+                  AND doctors.role IN ('gp', 'specialist')
+                GROUP BY doctors.id, doctors.name, doctors.role, doctors.specialty, doctors.available
+                ORDER BY active_cases DESC, doctors.name ASC
+                """
+            ).fetchall()
+            return [dict(row) for row in rows]

@@ -1,30 +1,45 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="hero">
-    <div>
+<section class="auth-layout">
+    <article class="auth-showcase">
         <p class="eyebrow">Secure Access</p>
-        <h2>Doctor Login</h2>
-    </div>
-</section>
+        <h2>Welcome back to MedTalk</h2>
+        <p class="auth-copy">Review multilingual patient summaries, respond with structured care plans, and keep patients informed through one clean doctor workspace.</p>
+        <div class="auth-feature-list">
+            <div class="auth-feature">
+                <strong>Voice-first intake</strong>
+                <span>Patients describe symptoms in their own language.</span>
+            </div>
+            <div class="auth-feature">
+                <strong>Priority triage</strong>
+                <span>Urgency-aware queues keep critical care visible first.</span>
+            </div>
+            <div class="auth-feature">
+                <strong>Trust-building follow-up</strong>
+                <span>Doctors reply with patient-friendly, structured explanations.</span>
+            </div>
+        </div>
+    </article>
 
-<section class="two-col">
-    <article class="panel">
+    <article class="panel auth-panel">
+        <div class="auth-panel-head">
+            <p class="eyebrow">Doctor Login</p>
+            <h3>Sign in to your workspace</h3>
+        </div>
         <form method="post" action="/login" class="stack">
             {% if error %}
             <p class="error">{{ error }}</p>
             {% endif %}
             <label for="email">Email</label>
-            <input id="email" name="email" type="email" required />
+            <input id="email" name="email" type="email" placeholder="doctor@medtalk.org" required />
             <label for="password">Password</label>
-            <input id="password" name="password" type="password" required />
-            <button class="button" type="submit">Login</button>
+            <input id="password" name="password" type="password" placeholder="Enter your password" required />
+            <button class="button auth-button" type="submit">Login</button>
         </form>
-    </article>
-
-    <article class="panel">
-        <h3>Need an account?</h3>
-        <p>Register as a General Physician or Specialist and access the correct queue for your role.</p>
-        <a class="button secondary" href="/register">Register</a>
+        <div class="auth-footer-note">
+            <span>Need a doctor account?</span>
+            <a href="/register">Create one here</a>
+        </div>
     </article>
 </section>
 {% endblock %}

@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS doctors (
     name TEXT NOT NULL,
     role TEXT NOT NULL,
     specialty TEXT NOT NULL,
+    organization TEXT,
+    location TEXT,
     available INTEGER NOT NULL DEFAULT 1
 );
 
@@ -102,6 +104,19 @@ CREATE TABLE IF NOT EXISTS doctor_responses (
     FOREIGN KEY(case_id) REFERENCES cases(id),
     FOREIGN KEY(doctor_id) REFERENCES doctors(id)
 );
+
+CREATE TABLE IF NOT EXISTS ownership_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id INTEGER NOT NULL,
+    doctor_id INTEGER NOT NULL,
+    notification_role TEXT NOT NULL,
+    delivery_status TEXT NOT NULL,
+    delivery_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(case_id) REFERENCES cases(id),
+    FOREIGN KEY(doctor_id) REFERENCES doctors(id),
+    UNIQUE(case_id, doctor_id, notification_role)
+);
 """
 
 
@@ -115,6 +130,14 @@ def init_db(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with get_connection(database_path) as connection:
         connection.executescript(SCHEMA)
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(doctors)").fetchall()
+        }
+        if "organization" not in columns:
+            connection.execute("ALTER TABLE doctors ADD COLUMN organization TEXT")
+        if "location" not in columns:
+            connection.execute("ALTER TABLE doctors ADD COLUMN location TEXT")
         connection.commit()
 
 

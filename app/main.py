@@ -167,6 +167,10 @@ def validate_registration_input(full_name: str, email: str, password: str, role:
     return None
 
 
+def get_role_dashboard_path(role: str) -> str:
+    return "/dashboard/admin" if role == "admin" else f"/dashboard/{role}"
+
+
 def current_user(request: Request) -> dict[str, Any] | None:
     token = request.cookies.get(settings.auth_cookie_name)
     if not token:
@@ -197,6 +201,119 @@ def annotate_case(case: dict[str, Any]) -> dict[str, Any]:
     enriched = dict(case)
     enriched["urgency_explanation"] = explain_urgency(enriched.get("summary_english", ""), urgency=enriched.get("urgency"))
     return enriched
+
+
+def build_dashboard_stacks(cases: list[dict[str, Any]], role: str) -> list[dict[str, str | int]]:
+    total_cases = len(cases)
+    high_cases = sum(1 for case in cases if case.get("urgency") == "high")
+    medium_cases = sum(1 for case in cases if case.get("urgency") == "medium")
+    low_cases = sum(1 for case in cases if case.get("urgency") == "low")
+    top_focus = cases[0]["patient_name"] if cases else "No active case"
+
+    return [
+        {
+            "label": "Active Queue",
+            "value": total_cases,
+            "tone": "neutral",
+            "caption": "Cases currently assigned to you and waiting for review.",
+        },
+        {
+            "label": "Critical First",
+            "value": high_cases,
+            "tone": "high",
+            "caption": "Emergency-priority cases that should be opened before everything else.",
+        },
+        {
+            "label": "Urgent Review",
+            "value": medium_cases,
+            "tone": "medium",
+            "caption": "Faster follow-up needed, but not immediate emergency escalation.",
+        },
+        {
+            "label": "Queue Focus",
+            "value": top_focus,
+            "tone": "low" if low_cases else "neutral",
+            "caption": (
+                "Highest-priority case at the top of your stack."
+                if cases
+                else f"No {role} cases are waiting right now."
+            ),
+        },
+    ]
+
+
+def build_admin_stacks(metrics: dict[str, Any]) -> dict[str, list[dict[str, str | int]]]:
+    patient_side = [
+        {
+            "label": "Registered Families",
+            "value": metrics["phones"],
+            "tone": "neutral",
+            "caption": "Unique phone numbers connected to MedTalk intake.",
+        },
+        {
+            "label": "Patient Profiles",
+            "value": metrics["profiles"],
+            "tone": "low",
+            "caption": "Profiles created for family members under shared numbers.",
+        },
+        {
+            "label": "Active Intake Sessions",
+            "value": metrics["active_intakes"],
+            "tone": "medium" if metrics["active_intakes"] else "neutral",
+            "caption": "Patients currently in onboarding or AI interview flow.",
+        },
+        {
+            "label": "Waiting For Doctor",
+            "value": metrics["waiting_patients"],
+            "tone": "high" if metrics["waiting_patients"] else "neutral",
+            "caption": "Cases already summarized and waiting in doctor-side workflow.",
+        },
+    ]
+    doctor_side = [
+        {
+            "label": "Active Doctors",
+            "value": metrics["total_doctors"],
+            "tone": "neutral",
+            "caption": "All active GP and specialist accounts in the system.",
+        },
+        {
+            "label": "General Physicians",
+            "value": metrics["gps"],
+            "tone": "low",
+            "caption": "Doctors currently available for first-line review.",
+        },
+        {
+            "label": "Specialists",
+            "value": metrics["specialists"],
+            "tone": "medium",
+            "caption": "Domain specialists available for referred cases.",
+        },
+        {
+            "label": "Completed Consultations",
+            "value": metrics["completed_cases"],
+            "tone": "neutral",
+            "caption": "Cases fully responded to by the doctor workflow.",
+        },
+    ]
+    care_ops = [
+        {
+            "label": "High Urgency Open",
+            "value": metrics["open_high"],
+            "tone": "high" if metrics["open_high"] else "neutral",
+            "caption": "Critical open cases currently requiring fast attention.",
+        },
+        {
+            "label": "Medium Urgency Open",
+            "value": metrics["open_medium"],
+            "tone": "medium" if metrics["open_medium"] else "neutral",
+            "caption": "Urgent but non-emergency cases still pending review.",
+        },
+    ]
+    return {
+        "patient_side": patient_side,
+        "doctor_side": doctor_side,
+        "care_ops": care_ops,
+    }
 
 
 def transcribe_media_audio_details(audio_file_path: str) -> dict[str, str]:
@@ -235,6 +352,122 @@ def build_repeat_voice_prompt(language: str) -> str:
     )
 
 
+def build_structured_doctor_reply(possible_cause: str, care_plan: str) -> str:
+    cause = possible_cause.strip()
+    plan = care_plan.strip()
+    return (
+        "Possible Cause / Reason\n"
+        f"{cause}\n\n"
+        "Care Plan\n"
+        f"{plan}\n\n"
+        "If symptoms worsen, new symptoms appear, or improvement does not happen as expected, please seek further medical care."
+    )
+
+
+def append_temp_chat_turn(context: dict[str, Any], role: str, content: str) -> None:
+    cleaned = (content or "").strip()
+    if not cleaned:
+        return
+    turns = list(context.get("chat_turns", []))
+    turns.append({"role": role, "content": cleaned})
+    context["chat_turns"] = turns[-12:]
+
+
+def get_doctor_display_specialty(doctor: dict[str, Any]) -> str:
+    role = (doctor.get("role") or "").strip().lower()
+    specialty = (doctor.get("specialty") or "").strip()
+    if role == "gp":
+        return "General Physician"
+    return specialty or "Specialist"
+
+
+def build_patient_confidence_notification(doctor: dict[str, Any], patient_language: str) -> str:
+    lines = [
+        "Your case has been accepted and is now being reviewed by a doctor.",
+        "",
+        f"Doctor: {doctor.get('name', 'Assigned Doctor')}",
+        f"Specialization: {get_doctor_display_specialty(doctor)}",
+    ]
+    if doctor.get("organization"):
+        lines.append(f"Hospital / Organization: {doctor['organization']}")
+    if doctor.get("location"):
+        lines.append(f"Location: {doctor['location']}")
+    lines.extend(
+        [
+            "",
+            "You are now connected to a healthcare professional who is reviewing the details you shared.",
+            "The doctor will respond here after review.",
+            "If your symptoms suddenly become much worse or you feel unsafe, please seek urgent medical care immediately.",
+        ]
+    )
+    return translate_for_patient("\n".join(lines), patient_language)
+
+
+def maybe_notify_patient_doctor_ownership(case: dict[str, Any], user: dict[str, Any]) -> str | None:
+    if case.get("status") in {"responded", "closed", "superseded"}:
+        return None
+
+    notification_role = "gp_review" if user["role"] == "gp" else "specialist_review"
+    if repository.has_ownership_notification(case["id"], int(user["doctor_id"]), notification_role):
+        return None
+
+    doctor = repository.get_doctor(int(user["doctor_id"]))
+    if not doctor:
+        return None
+
+    patient_message = build_patient_confidence_notification(doctor, case["patient_language"])
+    audio_url = None
+    public_audio_url = None
+    if not TEXT_ONLY_WHATSAPP_REPLIES:
+        try:
+            audio_url = generate_real_audio(patient_message, case["patient_language"])
+            public_audio_url = build_public_media_url(audio_url)
+        except Exception as exc:
+            debug_log("ownership_notification.tts_failed", case_id=case["id"], doctor_id=user["doctor_id"], error=str(exc))
+
+    delivery_status = "sent"
+    delivery_error = None
+    try:
+        send_whatsapp_message(case["phone_number"], patient_message, public_audio_url)
+    except Exception as exc:
+        delivery_status = "failed"
+        delivery_error = str(exc)
+        debug_log(
+            "ownership_notification.send_failed",
+            case_id=case["id"],
+            doctor_id=user["doctor_id"],
+            phone=case["phone_number"],
+            error=delivery_error,
+        )
+        repository.add_message(
+            case["conversation_id"],
+            "system",
+            "text",
+            "Patient confidence update could not be delivered on WhatsApp, but the doctor has taken ownership of the case.",
+            delivery_error,
+            None,
+        )
+    else:
+        repository.add_message(
+            case["conversation_id"],
+            "system",
+            "text",
+            "Patient confidence update sent after doctor accepted the case for review.",
+            patient_message,
+            audio_url,
+        )
+        debug_log("ownership_notification.sent", case_id=case["id"], doctor_id=user["doctor_id"])
+
+    repository.record_ownership_notification(
+        case["id"],
+        int(user["doctor_id"]),
+        notification_role,
+        delivery_status,
+        delivery_error,
+    )
+    return delivery_status
+
+
 def handle_patient_message(
     phone: str,
     incoming_text: str,
@@ -258,15 +491,6 @@ def handle_patient_message(
         incoming_text=incoming_text,
     )
 
-    repository.add_message(
-        conversation["id"],
-        "patient",
-        message_type,
-        incoming_text,
-        incoming_text if language == "en" else f"[English summary pending] {incoming_text}",
-        media_url,
-    )
-
     stage = conversation["stage"]
     text = (incoming_text or "").strip()
 
@@ -287,11 +511,9 @@ def handle_patient_message(
         if not profiles:
             repository.update_conversation(conversation["id"], stage="profile_name", status="active", language=language, context=context)
             reply = "Welcome to MedTalk. Let's create the first patient profile.\nWhat is the patient's name?"
-            repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
         repository.update_conversation(conversation["id"], stage="profile_select", status="active", language=language, context=context)
         reply = profile_menu(profiles)
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
     if stage == "profile_select":
@@ -306,7 +528,7 @@ def handle_patient_message(
                 stage="interview",
                 status="active",
                 language=selected["preferred_language"],
-                context={**context, "interview_answers": {}, "interview_index": 0, "temp_symptom": None, "temp_detected_language": None},
+                context={**context, "interview_answers": {}, "interview_index": 0, "chat_turns": [], "temp_symptom": None, "temp_detected_language": None},
             )
             first_question = translate_for_patient("Please describe the main problem in one or two sentences.", selected["preferred_language"])
             reply = f"Patient selected: {selected['name']}.\n{first_question}"
@@ -315,7 +537,6 @@ def handle_patient_message(
             reply = "What is the new patient's name?"
         else:
             reply = "That profile number is not valid."
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
     if stage == "profile_name":
@@ -325,7 +546,6 @@ def handle_patient_message(
             context["draft_profile"] = {"name": text}
             repository.update_conversation(conversation["id"], stage="profile_age", context=context)
             reply = "What is the patient's age?"
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
     if stage == "profile_age":
@@ -336,7 +556,6 @@ def handle_patient_message(
             context["draft_profile"]["age"] = age
             repository.update_conversation(conversation["id"], stage="profile_gender", context=context)
             reply = "What is the patient's gender?"
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
     if stage == "profile_gender":
@@ -346,14 +565,12 @@ def handle_patient_message(
             context["draft_profile"]["gender"] = text
             repository.update_conversation(conversation["id"], stage="profile_language", context=context)
             reply = f"Choose preferred language:\n{friendly_language_list()}"
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
     if stage == "profile_language":
         selected_language = parse_language_choice(text)
         if not selected_language:
             reply = f"Please choose a valid language.\n{friendly_language_list()}"
-            repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
         draft = context["draft_profile"]
         profile_id = repository.create_profile(phone, draft["name"], int(draft["age"]), draft["gender"], selected_language)
@@ -363,25 +580,22 @@ def handle_patient_message(
             stage="interview",
             status="active",
             language=selected_language,
-            context={**context, "interview_answers": {}, "interview_index": 0, "temp_symptom": None, "temp_detected_language": None},
+            context={**context, "interview_answers": {}, "interview_index": 0, "chat_turns": [], "temp_symptom": None, "temp_detected_language": None},
         )
         first_question = translate_for_patient("Please describe the main problem in one or two sentences.", selected_language)
         reply = f"Profile created for {draft['name']}.\n{first_question}"
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
     if stage == "confirm_language_switch":
         current_profile = repository.get_profile(conversation["patient_profile_id"])
         if not current_profile:
             reply = "Profile not found. Send RESET to start again."
-            repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
 
         temp_symptom = context.get("temp_symptom") or text
         selected_language = parse_language_switch_choice(text)
         if not selected_language:
             reply = build_language_switch_prompt(current_profile["preferred_language"])
-            repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
 
         transcript_quality = assess_transcript_quality(temp_symptom, detected_language=selected_language)
@@ -390,7 +604,6 @@ def handle_patient_message(
             context["temp_detected_language"] = None
             repository.update_conversation(conversation["id"], stage="interview", language=selected_language, context=context)
             reply = build_repeat_voice_prompt(selected_language)
-            repository.add_message(conversation["id"], "bot", "text", reply, str(transcript_quality["reason"]))
             return reply
 
         repository.update_profile(current_profile["id"], selected_language)
@@ -410,7 +623,6 @@ def handle_patient_message(
         current_profile = repository.get_profile(conversation["patient_profile_id"])
         if not current_profile:
             reply = "Profile not found. Send RESET to start again."
-            repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
 
         preferred_language = current_profile["preferred_language"]
@@ -419,10 +631,10 @@ def handle_patient_message(
             context["temp_detected_language"] = language
             repository.update_conversation(conversation["id"], stage="confirm_language_switch", context=context)
             reply = build_language_switch_prompt(preferred_language)
-            repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
 
         english_text = incoming_text if language == "en" else f"[English summary pending] {incoming_text}"
+        append_temp_chat_turn(context, "user", english_text)
         if infer_urgency(english_text) == "high":
             gp = repository.get_available_gp()
             triage_result = triage_case(english_text)
@@ -450,15 +662,14 @@ def handle_patient_message(
                 stage="queued_for_gp",
                 status="queued_for_gp",
                 language=preferred_language,
-                context=context,
+                context={**context, "chat_turns": []},
                 active_case_id=case_id,
             )
             reply = build_emergency_patient_alert(preferred_language)
-            repository.add_message(conversation["id"], "bot", "text", reply, "Emergency protocol triggered. Call 108 or visit the nearest hospital immediately.")
             return reply
 
-        db_messages = repository.list_messages(conversation["id"])
-        reply_english = get_question(english_text, db_messages)
+        chat_turns = context.get("chat_turns", [])
+        reply_english = get_question(english_text, chat_turns)
         if not reply_english or not reply_english.strip():
             reply_english = "I am having trouble processing that. Can you please repeat?"
 
@@ -489,15 +700,14 @@ def handle_patient_message(
                 stage="queued_for_gp",
                 status="queued_for_gp",
                 language=preferred_language,
-                context=context,
+                context={**context, "chat_turns": []},
                 active_case_id=case_id,
             )
             reply = build_emergency_patient_alert(preferred_language)
-            repository.add_message(conversation["id"], "bot", "text", reply, "Emergency protocol triggered. Call 108 or visit the nearest hospital immediately.")
             return reply
 
         if "[INTERVIEW_COMPLETE]" in reply_english:
-            summary_text, medical_brief = generate_case_summary(current_profile, db_messages)
+            summary_text, medical_brief = generate_case_summary(current_profile, chat_turns)
             urgency = "high" if medical_brief.get("red_flags_detected") else infer_urgency(summary_text)
             specialty = infer_specialty(medical_brief)
             gp = repository.get_available_gp()
@@ -515,27 +725,27 @@ def handle_patient_message(
                 stage="queued_for_gp",
                 status="queued_for_gp",
                 language=preferred_language,
-                context=context,
+                context={**context, "chat_turns": []},
                 active_case_id=case_id,
             )
             reply_english = "Thank you. Your case has been prepared and sent to the general physician queue."
+        else:
+            reply_english = reply_english.replace("[INTERVIEW_COMPLETE]", "").strip()
+            append_temp_chat_turn(context, "assistant", reply_english)
+            repository.update_conversation(conversation["id"], context=context)
 
         reply = translate_for_patient(reply_english.replace("[INTERVIEW_COMPLETE]", "").strip(), preferred_language)
-        repository.add_message(conversation["id"], "bot", "text", reply, reply_english)
         return reply
 
     if stage in {"queued_for_gp", "doctor_review", "referred"}:
         reply = translate_for_patient("Your case is under review. A doctor reply will reach you here.", conversation["language"])
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
     if stage == "doctor_replied":
         reply = translate_for_patient("This case is closed. Send RESET to start a new consultation.", conversation["language"])
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
         return reply
 
     reply = "Unsupported state. Send RESET to restart."
-    repository.add_message(conversation["id"], "bot", "text", reply, reply)
     return reply
 
 
@@ -544,6 +754,14 @@ def startup() -> None:
     ensure_media_directories()
     init_db(settings.database_path)
     repository.seed_doctors()
+    if settings.admin_email and settings.admin_password:
+        password_hash, password_salt = hash_password(settings.admin_password)
+        repository.ensure_admin_user(
+            full_name=settings.admin_full_name,
+            email=settings.admin_email,
+            password_hash=password_hash,
+            password_salt=password_salt,
+        )
     debug_log(
         "startup",
         database_path=str(settings.database_path),
@@ -557,7 +775,7 @@ def root(request: Request) -> RedirectResponse:
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=303)
-    return RedirectResponse(url=f"/dashboard/{user['role']}", status_code=303)
+    return RedirectResponse(url=get_role_dashboard_path(user["role"]), status_code=303)
 
 
 @app.get("/health")
@@ -604,7 +822,7 @@ def register(
     )
     user = repository.get_user_by_id(user_id)
     token = create_session_token(user)
-    response = RedirectResponse(url=f"/dashboard/{user['role']}", status_code=303)
+    response = RedirectResponse(url=get_role_dashboard_path(user["role"]), status_code=303)
     set_auth_cookie(response, token)
     return response
 
@@ -621,9 +839,25 @@ def login(request: Request, email: str = Form(...), password: str = Form(...)) -
         return templates.TemplateResponse("login.html", {"request": request, "current_user": current_user(request), "error": "Invalid email or password."}, status_code=401)
 
     token = create_session_token(user)
-    response = RedirectResponse(url=f"/dashboard/{user['role']}", status_code=303)
+    response = RedirectResponse(url=get_role_dashboard_path(user["role"]), status_code=303)
     set_auth_cookie(response, token)
     return response
+
+
+@app.get("/profile", response_class=HTMLResponse)
+def profile_page(request: Request) -> HTMLResponse:
+    auth = guest_redirect(request)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    doctor = repository.get_doctor(int(auth["doctor_id"]))
+    return templates.TemplateResponse(
+        "profile.html",
+        {
+            "request": request,
+            "current_user": auth,
+            "doctor": doctor,
+        },
+    )
 
 
 @app.post("/logout")
@@ -779,10 +1013,34 @@ def dashboard(request: Request, role: str) -> Response:
     auth = guest_redirect(request)
     if isinstance(auth, RedirectResponse):
         return auth
+    if role == "admin":
+        if auth["role"] != "admin":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        metrics = repository.get_admin_metrics()
+        return templates.TemplateResponse(
+            "admin_dashboard.html",
+            {
+                "request": request,
+                "current_user": auth,
+                "admin_stacks": build_admin_stacks(metrics),
+                "recent_cases": [annotate_case(case) for case in repository.list_admin_recent_cases()],
+                "doctor_workloads": repository.list_doctor_workloads(),
+            },
+        )
+
     if role not in {"gp", "specialist"} or auth["role"] != role:
         raise HTTPException(status_code=403, detail="Forbidden")
     cases = [annotate_case(case) for case in repository.list_cases(role, int(auth["doctor_id"]))]
-    return templates.TemplateResponse("dashboard.html", {"request": request, "role": role, "cases": cases, "current_user": auth})
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "role": role,
+            "cases": cases,
+            "dashboard_stacks": build_dashboard_stacks(cases, role),
+            "current_user": auth,
+        },
+    )
 
 
 @app.get("/cases/{case_id}", response_class=HTMLResponse)
@@ -800,14 +1058,18 @@ def case_detail(request: Request, case_id: int) -> Response:
     if auth["role"] == "specialist" and case.get("assigned_specialist_id") != auth["doctor_id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    ownership_status = maybe_notify_patient_doctor_ownership(case, auth)
+
     return templates.TemplateResponse(
         "case_detail.html",
         {
             "request": request,
             "case": annotate_case(case),
-            "messages": repository.list_messages(case["conversation_id"]),
+            "patient_history": repository.list_patient_case_history(case["patient_profile_id"], exclude_case_id=case_id),
             "specialists": repository.list_doctors("specialist"),
             "latest_response": repository.get_latest_response(case_id),
+            "delivery_status": request.query_params.get("delivery"),
+            "ownership_status": ownership_status,
             "current_user": auth,
         },
     )
@@ -826,7 +1088,12 @@ def refer_case(request: Request, case_id: int, specialist_id: int = Form(...), r
 
 
 @app.post("/cases/{case_id}/reply")
-def reply_case(request: Request, case_id: int, english_reply: str = Form(...)) -> RedirectResponse:
+def reply_case(
+    request: Request,
+    case_id: int,
+    possible_cause: str = Form(...),
+    care_plan: str = Form(...),
+) -> RedirectResponse:
     user = require_user(request, {"gp", "specialist"})
     case = repository.get_case(case_id)
     if not case:
@@ -836,9 +1103,15 @@ def reply_case(request: Request, case_id: int, english_reply: str = Form(...)) -
     if user["role"] == "specialist" and case.get("assigned_specialist_id") != user["doctor_id"]:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    if len(possible_cause.strip()) < 10 or len(care_plan.strip()) < 10:
+        raise HTTPException(status_code=400, detail="Both doctor reply sections must be completed.")
+
+    english_reply = build_structured_doctor_reply(possible_cause, care_plan)
     translated_reply = translate_for_patient(english_reply, case["patient_language"])
     audio_url = None
     public_audio_url = None
+    delivery_status = "sent"
+    message_sid = None
 
     if not TEXT_ONLY_WHATSAPP_REPLIES:
         try:
@@ -847,13 +1120,32 @@ def reply_case(request: Request, case_id: int, english_reply: str = Form(...)) -
         except Exception as exc:
             debug_log("reply_case.tts_failed", case_id=case_id, error=str(exc))
 
+    completion = repository.complete_case(case_id, int(user["doctor_id"]), english_reply, translated_reply, audio_url or "")
+    repository.add_message(completion["conversation_id"], "doctor", "text", translated_reply, english_reply, audio_url)
+
     try:
         message_sid = send_whatsapp_message(case["phone_number"], translated_reply, public_audio_url)
     except Exception as exc:
-        debug_log("reply_case.send_failed", case_id=case_id, error=str(exc), phone=case["phone_number"])
-        raise HTTPException(status_code=500, detail="Failed to send doctor reply to WhatsApp. Check server logs.") from exc
+        delivery_status = "failed"
+        error_text = str(exc)
+        debug_log("reply_case.send_failed", case_id=case_id, error=error_text, phone=case["phone_number"])
+        repository.add_message(
+            completion["conversation_id"],
+            "system",
+            "text",
+            "Doctor reply was saved, but WhatsApp delivery failed. Please share the dashboard copy manually or try again later.",
+            error_text,
+            None,
+        )
+    else:
+        debug_log("reply_case.send_succeeded", case_id=case_id, doctor_id=user["doctor_id"], sid=message_sid)
 
-    completion = repository.complete_case(case_id, int(user["doctor_id"]), english_reply, translated_reply, audio_url or "")
-    repository.add_message(completion["conversation_id"], "doctor", "text", translated_reply, english_reply, audio_url)
-    debug_log("reply_case.done", case_id=case_id, doctor_id=user["doctor_id"], sid=message_sid, audio_url=audio_url)
-    return RedirectResponse(url=f"/cases/{case_id}", status_code=303)
+    debug_log(
+        "reply_case.done",
+        case_id=case_id,
+        doctor_id=user["doctor_id"],
+        sid=message_sid,
+        audio_url=audio_url,
+        delivery_status=delivery_status,
+    )
+    return RedirectResponse(url=f"/cases/{case_id}?delivery={delivery_status}", status_code=303)

@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+    <div>
+        <p class="eyebrow">Admin Control Room</p>
+        <h2>Platform Operations Overview</h2>
+        <p class="meta">Track patient intake, doctor workloads, urgency pressure, and recent case movement from one clean dashboard.</p>
+    </div>
+</section>
+
+<section class="admin-section">
+    <div class="section-head">
+        <h3>Patient-Side Flow</h3>
+        <p class="meta">How users are entering, progressing, and waiting inside MedTalk.</p>
+    </div>
+    <section class="stack-grid">
+        {% for stack in admin_stacks.patient_side %}
+        <article class="stack-card tone-{{ stack.tone }}">
+            <p class="stack-label">{{ stack.label }}</p>
+            <h3>{{ stack.value }}</h3>
+            <p class="meta">{{ stack.caption }}</p>
+        </article>
+        {% endfor %}
+    </section>
+</section>
+
+<section class="admin-section">
+    <div class="section-head">
+        <h3>Doctor-Side Flow</h3>
+        <p class="meta">Monitor available capacity and completed doctor work across the platform.</p>
+    </div>
+    <section class="stack-grid">
+        {% for stack in admin_stacks.doctor_side %}
+        <article class="stack-card tone-{{ stack.tone }}">
+            <p class="stack-label">{{ stack.label }}</p>
+            <h3>{{ stack.value }}</h3>
+            <p class="meta">{{ stack.caption }}</p>
+        </article>
+        {% endfor %}
+    </section>
+</section>
+
+<section class="admin-section">
+    <div class="section-head">
+        <h3>Care Operations</h3>
+        <p class="meta">Urgency pressure and active system load that needs operational attention.</p>
+    </div>
+    <section class="stack-grid compact-grid">
+        {% for stack in admin_stacks.care_ops %}
+        <article class="stack-card tone-{{ stack.tone }}">
+            <p class="stack-label">{{ stack.label }}</p>
+            <h3>{{ stack.value }}</h3>
+            <p class="meta">{{ stack.caption }}</p>
+        </article>
+        {% endfor %}
+    </section>
+</section>
+
+<section class="two-col admin-panels">
+    <article class="panel">
+        <div class="section-head">
+            <h3>Recent Cases</h3>
+            <p class="meta">Latest saved summaries across the whole project.</p>
+        </div>
+        <div class="timeline">
+            {% for case in recent_cases %}
+            <div class="timeline-item">
+                <div class="card-head">
+                    <span class="badge urgency-{{ case.urgency }}">{{ case.urgency|upper }}</span>
+                    <span class="badge muted">{{ case.status }}</span>
+                </div>
+                <p><strong>Case #{{ case.id }} | {{ case.patient_name }}</strong></p>
+                <p class="meta">{{ case.patient_language }} | {{ case.specialty_hint }} | {{ case.created_at }}</p>
+                <p class="summary-clamp">{{ case.summary_english }}</p>
+                <p class="meta">
+                    GP: {{ case.gp_name or "Unassigned" }}
+                    {% if case.specialist_name %} | Specialist: {{ case.specialist_name }}{% endif %}
+                </p>
+            </div>
+            {% else %}
+            <div class="timeline-item">
+                <p><strong>No cases yet</strong></p>
+                <p class="meta">Saved summaries will appear here once patient interviews are completed.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </article>
+
+    <article class="panel">
+        <div class="section-head">
+            <h3>Doctor Workloads</h3>
+            <p class="meta">Who is carrying open work and how much has been completed.</p>
+        </div>
+        <div class="data-table">
+            <div class="table-row table-head-row">
+                <span>Doctor</span>
+                <span>Role</span>
+                <span>Active</span>
+                <span>Completed</span>
+            </div>
+            {% for doctor in doctor_workloads %}
+            <div class="table-row">
+                <span>
+                    <strong>{{ doctor.name }}</strong><br />
+                    <small class="meta">{{ doctor.specialty }}</small>
+                </span>
+                <span>{{ doctor.role|upper }}</span>
+                <span>{{ doctor.active_cases }}</span>
+                <span>{{ doctor.completed_cases }}</span>
+            </div>
+            {% else %}
+            <div class="table-row">
+                <span>No doctor accounts found.</span>
+                <span>-</span>
+                <span>-</span>
+                <span>-</span>
+            </div>
+            {% endfor %}
+        </div>
+    </article>
+</section>
+{% endblock %}

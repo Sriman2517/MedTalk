@@ -1,31 +1,54 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="hero">
-    <div>
-        <p class="eyebrow">Secure Access</p>
-        <h2>Create Doctor Account</h2>
-    </div>
-</section>
+<section class="auth-layout">
+    <article class="auth-showcase">
+        <p class="eyebrow">Doctor Onboarding</p>
+        <h2>Create your MedTalk account</h2>
+        <p class="auth-copy">Join as a general physician or specialist and step into a cleaner multilingual review workflow built for rural and low-literacy care support.</p>
+        <div class="auth-feature-list">
+            <div class="auth-feature">
+                <strong>Role-based access</strong>
+                <span>Each doctor only sees the right queue and assigned cases.</span>
+            </div>
+            <div class="auth-feature">
+                <strong>Structured responses</strong>
+                <span>Explain probable causes and care plans in one guided reply flow.</span>
+            </div>
+            <div class="auth-feature">
+                <strong>Case continuity</strong>
+                <span>See saved summaries and keep the patient informed with confidence updates.</span>
+            </div>
+        </div>
+    </article>
 
-<section class="panel">
-    <form method="post" action="/register" class="stack">
-        {% if error %}
-        <p class="error">{{ error }}</p>
-        {% endif %}
-        <label for="full_name">Full name</label>
-        <input id="full_name" name="full_name" required />
-        <label for="email">Email</label>
-        <input id="email" name="email" type="email" required />
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" minlength="8" required />
-        <label for="role">Role</label>
-        <select id="role" name="role">
-            <option value="gp">General Physician</option>
-            <option value="specialist">Specialist</option>
-        </select>
-        <label for="specialty">Specialty</label>
-        <input id="specialty" name="specialty" value="general_medicine" />
-        <button class="button" type="submit">Register</button>
-    </form>
+    <article class="panel auth-panel">
+        <div class="auth-panel-head">
+            <p class="eyebrow">Create Account</p>
+            <h3>Register as a doctor</h3>
+        </div>
+        <form method="post" action="/register" class="stack">
+            {% if error %}
+            <p class="error">{{ error }}</p>
+            {% endif %}
+            <label for="full_name">Full name</label>
+            <input id="full_name" name="full_name" placeholder="Dr. Your Name" required />
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" placeholder="doctor@medtalk.org" required />
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" minlength="8" placeholder="At least 8 characters" required />
+            <label for="role">Role</label>
+            <select id="role" name="role">
+                <option value="gp">General Physician</option>
+                <option value="specialist">Specialist</option>
+            </select>
+            <label for="specialty">Specialty</label>
+            <input id="specialty" name="specialty" value="general_medicine" />
+            <button class="button auth-button" type="submit">Register</button>
+        </form>
+        <div class="auth-footer-note">
+            <span>Already registered?</span>
+            <a href="/login">Login here</a>
+        </div>
+    </article>
 </section>
 {% endblock %}

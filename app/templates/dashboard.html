@@ -8,6 +8,16 @@
     </div>
 </section>
 
+<section class="stack-grid">
+    {% for stack in dashboard_stacks %}
+    <article class="stack-card tone-{{ stack.tone }}">
+        <p class="stack-label">{{ stack.label }}</p>
+        <h3>{{ stack.value }}</h3>
+        <p class="meta">{{ stack.caption }}</p>
+    </article>
+    {% endfor %}
+</section>
+
 <section class="grid">
     {% for case in cases %}
     <article class="card">
