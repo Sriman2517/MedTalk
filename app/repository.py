@@ -29,6 +29,55 @@ class Repository:
                 doctors,
             )
 
+    def create_user(
+        self,
+        *,
+        full_name: str,
+        email: str,
+        password_hash: str,
+        password_salt: str,
+        role: str,
+        specialty: str,
+    ) -> int:
+        with transaction(self.database_path) as connection:
+            cursor = connection.execute(
+                "INSERT INTO doctors(name, role, specialty, available) VALUES (?, ?, ?, 1)",
+                (full_name, role, specialty),
+            )
+            doctor_id = int(cursor.lastrowid)
+            user_cursor = connection.execute(
+                """
+                INSERT INTO users(doctor_id, full_name, email, password_hash, password_salt, role, specialty, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (doctor_id, full_name, email.lower(), password_hash, password_salt, role, specialty),
+            )
+            return int(user_cursor.lastrowid)
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        with transaction(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT id, doctor_id, full_name, email, password_hash, password_salt, role, specialty, is_active, created_at
+                FROM users
+                WHERE email = ?
+                """,
+                (email.lower(),),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
+        with transaction(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT id, doctor_id, full_name, email, password_hash, password_salt, role, specialty, is_active, created_at
+                FROM users
+                WHERE id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
     def ensure_phone(self, phone_number: str) -> None:
         with transaction(self.database_path) as connection:
             connection.execute("INSERT OR IGNORE INTO phones(phone_number) VALUES (?)", (phone_number,))
@@ -56,6 +105,17 @@ class Repository:
                 (phone_number, name, age, gender, language),
             )
             return int(cursor.lastrowid)
+
+    def update_profile(self, profile_id: int, preferred_language: str) -> None:
+        with transaction(self.database_path) as connection:
+            connection.execute(
+                """
+                UPDATE patient_profiles
+                SET preferred_language = ?
+                WHERE id = ?
+                """,
+                (preferred_language, profile_id),
+            )
 
     def get_profile(self, profile_id: int) -> dict[str, Any] | None:
         with transaction(self.database_path) as connection:
@@ -151,10 +211,13 @@ class Repository:
         with transaction(self.database_path) as connection:
             row = connection.execute(
                 """
-                SELECT id, name, role, specialty
+                SELECT doctors.id, doctors.name, doctors.role, doctors.specialty
                 FROM doctors
-                WHERE role = 'gp' AND available = 1
-                ORDER BY id
+                JOIN users ON users.doctor_id = doctors.id
+                WHERE doctors.role = 'gp'
+                  AND doctors.available = 1
+                  AND users.is_active = 1
+                ORDER BY doctors.id
                 LIMIT 1
                 """
             ).fetchone()
@@ -204,9 +267,11 @@ class Repository:
             )
             return int(cursor.lastrowid)
 
-    def list_cases(self, role: str) -> list[dict[str, Any]]:
+    def list_cases(self, role: str, doctor_id: int | None = None) -> list[dict[str, Any]]:
         status_filter = "queued_for_gp" if role == "gp" else "referred"
         doctor_field = "assigned_doctor_id" if role == "gp" else "assigned_specialist_id"
+        extra_filter = f" AND cases.{doctor_field} = ?" if doctor_id is not None else ""
+        params: tuple[Any, ...] = (status_filter,) if doctor_id is None else (status_filter, doctor_id)
         with transaction(self.database_path) as connection:
             rows = connection.execute(
                 f"""
@@ -227,6 +292,7 @@ class Repository:
                 JOIN patient_profiles ON patient_profiles.id = cases.patient_profile_id
                 LEFT JOIN doctors ON doctors.id = cases.{doctor_field}
                 WHERE cases.status = ?
+                {extra_filter}
                 ORDER BY
                     CASE cases.urgency
                         WHEN 'emergency' THEN 1
@@ -235,7 +301,7 @@ class Repository:
                     END,
                     cases.created_at ASC
                 """,
-                (status_filter,),
+                params,
             ).fetchall()
             return [dict(row) for row in rows]
 
@@ -279,10 +345,12 @@ class Repository:
         with transaction(self.database_path) as connection:
             rows = connection.execute(
                 """
-                SELECT id, name, role, specialty, available
+                SELECT doctors.id, doctors.name, doctors.role, doctors.specialty, doctors.available
                 FROM doctors
-                WHERE role = ?
-                ORDER BY specialty, name
+                JOIN users ON users.doctor_id = doctors.id
+                WHERE doctors.role = ?
+                  AND users.is_active = 1
+                ORDER BY doctors.specialty, doctors.name
                 """,
                 (role,),
             ).fetchall()

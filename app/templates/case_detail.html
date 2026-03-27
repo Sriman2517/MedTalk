@@ -4,7 +4,7 @@
     <div>
         <p class="eyebrow">Case #{{ case.id }}</p>
         <h2>{{ case.patient_name }}</h2>
-        <p class="meta">{{ case.patient_age }} years • {{ case.patient_gender }} • {{ case.patient_language }} • {{ case.phone_number }}</p>
+        <p class="meta">{{ case.patient_age }} years | {{ case.patient_gender }} | {{ case.patient_language }} | {{ case.phone_number }}</p>
     </div>
     <div class="card-head">
         <span class="badge urgency-{{ case.urgency }}">{{ case.urgency|upper }}</span>
@@ -16,6 +16,10 @@
     <article class="panel">
         <h3>Clinical Summary</h3>
         <pre>{{ case.summary_english }}</pre>
+        {% if case.urgency_explanation %}
+        <h4>Urgency Reason</h4>
+        <p>{{ case.urgency_explanation }}</p>
+        {% endif %}
         {% if case.referral_note %}
         <h4>Referral Note</h4>
         <p>{{ case.referral_note }}</p>
@@ -27,7 +31,7 @@
         <div class="timeline">
             {% for message in messages %}
             <div class="timeline-item">
-                <p><strong>{{ message.sender_role|title }}</strong> · {{ message.message_type }}</p>
+                <p><strong>{{ message.sender_role|title }}</strong> | {{ message.message_type }}</p>
                 <p>{{ message.original_text or "-" }}</p>
             </div>
             {% endfor %}
@@ -42,11 +46,8 @@
         <p><strong>{{ latest_response.doctor_name }}</strong> replied:</p>
         <p>{{ latest_response.english_reply }}</p>
         <p class="meta">Patient copy: {{ latest_response.translated_reply }}</p>
-        <p class="meta">Voice placeholder: {{ latest_response.audio_url }}</p>
         {% else %}
         <form method="post" action="/cases/{{ case.id }}/reply" class="stack">
-            <label for="doctor_id">Doctor ID</label>
-            <input id="doctor_id" name="doctor_id" value="{{ case.assigned_specialist_id or case.assigned_doctor_id or 1 }}" />
             <label for="english_reply">Reply in English</label>
             <textarea id="english_reply" name="english_reply" rows="6" placeholder="Share the advice or next step for the patient." required></textarea>
             <button class="button" type="submit">Send Reply</button>
@@ -56,14 +57,14 @@
 
     <article class="panel">
         <h3>Refer To Specialist</h3>
-        {% if case.status == "responded" %}
-        <p>This case is already closed.</p>
+        {% if case.status == "responded" or current_user.role != "gp" %}
+        <p>{% if case.status == "responded" %}This case is already closed.{% else %}Only general physicians can refer cases.{% endif %}</p>
         {% else %}
         <form method="post" action="/cases/{{ case.id }}/refer" class="stack">
             <label for="specialist_id">Specialist</label>
             <select id="specialist_id" name="specialist_id">
                 {% for specialist in specialists %}
-                <option value="{{ specialist.id }}">{{ specialist.name }} · {{ specialist.specialty }}</option>
+                <option value="{{ specialist.id }}">{{ specialist.name }} | {{ specialist.specialty }}</option>
                 {% endfor %}
             </select>
             <label for="referral_note">Referral note</label>

@@ -4,6 +4,7 @@
     <div>
         <p class="eyebrow">{{ "General Physician" if role == "gp" else "Specialist" }} Queue</p>
         <h2>{{ cases|length }} active case{{ "" if cases|length == 1 else "s" }}</h2>
+        <p class="meta">Prioritized by urgency and filtered for the logged-in doctor.</p>
     </div>
 </section>
 
@@ -15,8 +16,11 @@
             <span class="badge muted">{{ case.specialty_hint }}</span>
         </div>
         <h3>{{ case.patient_name }}</h3>
-        <p class="meta">{{ case.patient_age }} years • {{ case.patient_gender }} • {{ case.patient_language }}</p>
+        <p class="meta">{{ case.patient_age }} years | {{ case.patient_gender }} | {{ case.patient_language }}</p>
         <p>{{ case.summary_english.split('\n')[2] if case.summary_english else "No summary" }}</p>
+        {% if case.urgency_explanation %}
+        <p class="summary-note">{{ case.urgency_explanation }}</p>
+        {% endif %}
         <a class="button" href="/cases/{{ case.id }}">Open Case</a>
     </article>
     {% else %}

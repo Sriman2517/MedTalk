@@ -4,17 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MedTalk</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
     <header class="topbar">
-        <div>
+        <div class="brand">
             <p class="eyebrow">MedTalk</p>
             <h1>Multilingual Voice-First Triage</h1>
         </div>
         <nav>
-            <a href="/dashboard/gp">GP Queue</a>
-            <a href="/dashboard/specialist">Specialist Queue</a>
+            {% if current_user %}
+            <a href="/dashboard/{{ current_user.role }}">{{ "GP Queue" if current_user.role == "gp" else "Specialist Queue" }}</a>
+            <span class="user-chip">{{ current_user.full_name }} | {{ current_user.role|upper }}</span>
+            <form method="post" action="/logout" class="inline-form">
+                <button class="button secondary" type="submit">Logout</button>
+            </form>
+            {% else %}
+            <a href="/login">Login</a>
+            <a href="/register">Register</a>
+            {% endif %}
         </nav>
     </header>
     <main class="page">

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+    <div>
+        <p class="eyebrow">Secure Access</p>
+        <h2>Create Doctor Account</h2>
+    </div>
+</section>
+
+<section class="panel">
+    <form method="post" action="/register" class="stack">
+        {% if error %}
+        <p class="error">{{ error }}</p>
+        {% endif %}
+        <label for="full_name">Full name</label>
+        <input id="full_name" name="full_name" required />
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" minlength="8" required />
+        <label for="role">Role</label>
+        <select id="role" name="role">
+            <option value="gp">General Physician</option>
+            <option value="specialist">Specialist</option>
+        </select>
+        <label for="specialty">Specialty</label>
+        <input id="specialty" name="specialty" value="general_medicine" />
+        <button class="button" type="submit">Register</button>
+    </form>
+</section>
+{% endblock %}
