@@ -156,20 +156,20 @@ def translate_for_patient(text: str, language: str) -> str:
 
 
 def generate_real_audio(text: str, language: str) -> str:
-    normalized_language = normalize_language(language)
-    audio_dir = Path(__file__).resolve().parent / "static" / "audio"
+    from app.sensory.synthesizer import generate_audio_reply
+    from pathlib import Path
+    
+    BASE_DIR = Path(__file__).resolve().parent
+    audio_dir = BASE_DIR / "static" / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = f"{hashlib.sha256(f'{normalized_language}:{text}'.encode('utf-8')).hexdigest()}.mp3"
-    output_path = audio_dir / filename
-
-    print(
-        f"[triage.generate_real_audio] language={normalized_language!r} output_path={str(output_path)!r}",
-        flush=True,
-    )
-    generate_audio_reply(text, normalized_language, str(output_path.resolve()))
-    print(
-        f"[triage.generate_real_audio] generated public_url={'/static/audio/' + filename!r}",
-        flush=True,
-    )
-    return f"/static/audio/{filename}"
+    
+    file_name = f"{abs(hash(text))}.mp3"
+    absolute_path = str(audio_dir / file_name)
+    
+    try:
+        generate_audio_reply(text, normalize_language(language), absolute_path)
+    except Exception as e:
+        print(f"TTS error: {e}")
+        return ""
+        
+    return f"/static/audio/{file_name}"
