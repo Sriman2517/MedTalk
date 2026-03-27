@@ -141,17 +141,17 @@ a {
     letter-spacing: 0.04em;
 }
 
-.urgency-emergency {
+.urgency-high {
     background: rgba(185, 28, 28, 0.12);
     color: var(--danger);
 }
 
-.urgency-high {
+.urgency-medium {
     background: rgba(194, 65, 12, 0.12);
     color: var(--warning);
 }
 
-.urgency-routine {
+.urgency-low {
     background: rgba(4, 120, 87, 0.12);
     color: var(--success);
 }

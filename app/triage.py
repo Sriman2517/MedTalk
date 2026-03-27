@@ -14,6 +14,17 @@ SUPPORTED_LANGUAGES = {
     "ta": "Tamil",
 }
 
+LANGUAGE_ALIASES = {
+    "english": "en",
+    "en": "en",
+    "hindi": "hi",
+    "hi": "hi",
+    "telugu": "te",
+    "te": "te",
+    "tamil": "ta",
+    "ta": "ta",
+}
+
 NATIVE_LANGUAGE_NAMES = {
     "en": "English",
     "hi": "हिंदी",
@@ -21,18 +32,11 @@ NATIVE_LANGUAGE_NAMES = {
     "ta": "தமிழ்",
 }
 
-LANGUAGE_SWITCH_LINES = {
-    "en": "It seems you are speaking {language_name}. Do you want to switch the language?",
-    "hi": "आप {language_name} बोल रहे हैं। क्या आप भाषा बदलना चाहते हैं?",
-    "te": "మీరు {language_name} మాట్లాడుతున్నారు. మీరు భాషను మార్చాలనుకుంటున్నారా?",
-    "ta": "நீங்கள் {language_name} பேசுகிறீர்கள் போலுள்ளது. மொழியை மாற்ற விரும்புகிறீர்களா?",
-}
-
-YES_NO_LABELS = {
-    "en": ("Yes", "No"),
-    "hi": ("हाँ", "नहीं"),
-    "te": ("అవును", "వద్దు"),
-    "ta": ("ஆம்", "இல்லை"),
+LANGUAGE_MENU_PROMPTS = {
+    "en": "It seems you might want to change the language. Please look at your screen and reply with the number of the language you want to continue in.",
+    "hi": "ऐसा लगता है कि आप भाषा बदलना चाहते हैं। कृपया स्क्रीन देखें और जिस भाषा में आगे बात करनी है उसका नंबर भेजें।",
+    "te": "మీరు భాషను మార్చాలనుకుంటున్నట్లు ఉంది. దయచేసి స్క్రీన్ చూసి మీరు కొనసాగాలనుకునే భాష సంఖ్యను పంపండి.",
+    "ta": "நீங்கள் மொழியை மாற்ற விரும்புகிறீர்கள் போலுள்ளது. தயவுசெய்து திரையை பார்த்து நீங்கள் தொடர விரும்பும் மொழியின் எண்ணை அனுப்புங்கள்.",
 }
 
 QUESTION_FLOW = [
@@ -84,7 +88,7 @@ QUESTION_FLOW = [
 ]
 
 RED_FLAG_PATTERNS = {
-    "emergency": [
+    "high": [
         "chest pain",
         "trouble breathing",
         "breathing difficulty",
@@ -94,7 +98,7 @@ RED_FLAG_PATTERNS = {
         "fits",
         "seizure",
     ],
-    "high": [
+    "medium": [
         "high fever",
         "vomiting continuously",
         "dehydration",
@@ -108,6 +112,13 @@ SPECIALTY_HINTS = {
     "dermatology": ["rash", "itching", "skin", "eczema"],
     "gastroenterology": ["stomach", "abdomen", "vomit", "diarrhea"],
     "neurology": ["headache", "seizure", "stroke", "numbness", "dizziness"],
+}
+
+SCRIPT_PATTERNS = {
+    "hi": r"[\u0900-\u097F]",
+    "te": r"[\u0C00-\u0C7F]",
+    "ta": r"[\u0B80-\u0BFF]",
+    "en": r"[A-Za-z]",
 }
 
 
@@ -124,7 +135,10 @@ def detect_language(text: str | None) -> str:
 
 
 def normalize_language(language: str | None) -> str:
-    return language if language in SUPPORTED_LANGUAGES else "en"
+    if not language:
+        return "en"
+    cleaned = str(language).strip().lower()
+    return LANGUAGE_ALIASES.get(cleaned, "en")
 
 
 def get_language_name(language: str | None) -> str:
@@ -154,36 +168,34 @@ def parse_language_choice(text: str) -> str | None:
     return mapping.get(cleaned)
 
 
-def build_language_switch_prompt(current_language: str, detected_language: str) -> str:
+def build_language_switch_prompt(current_language: str) -> str:
     current_language = normalize_language(current_language)
-    detected_language = normalize_language(detected_language)
-    language_name_english = get_language_name(detected_language)
-    language_name_native = get_native_language_name(detected_language)
-
-    current_line = LANGUAGE_SWITCH_LINES.get(current_language, LANGUAGE_SWITCH_LINES["en"]).format(
-        language_name=language_name_english
-    )
-    detected_line = LANGUAGE_SWITCH_LINES.get(detected_language, LANGUAGE_SWITCH_LINES["en"]).format(
-        language_name=language_name_native
-    )
-    yes_native, no_native = YES_NO_LABELS.get(detected_language, YES_NO_LABELS["en"])
-
+    intro = LANGUAGE_MENU_PROMPTS.get(current_language, LANGUAGE_MENU_PROMPTS["en"])
     return (
-        f"🔄 {current_line}\n"
-        f"{detected_line}\n\n"
-        f"👍 1. Yes / {yes_native}\n"
-        f"👎 2. No / {no_native}"
+        f"🔄 {intro}\n\n"
+        "1 - हिंदी (Hindi)\n"
+        "2 - తెలుగు (Telugu)\n"
+        "3 - தமிழ் (Tamil)\n"
+        "4 - English"
     )
 
 
-def is_affirmative_language_switch(text: str) -> bool:
+def parse_language_switch_choice(text: str) -> str | None:
     cleaned = (text or "").strip().lower()
-    return cleaned in {"1", "yes", "y", "haan", "ha", "हाँ", "avunu", "అవును", "aam", "ஆம்"}
-
-
-def is_negative_language_switch(text: str) -> bool:
-    cleaned = (text or "").strip().lower()
-    return cleaned in {"2", "no", "n", "nahin", "nahi", "नहीं", "vaddu", "వద్దు", "illai", "இல்லை"}
+    mapping = {
+        "1": "hi",
+        "hindi": "hi",
+        "हिंदी": "hi",
+        "2": "te",
+        "telugu": "te",
+        "తెలుగు": "te",
+        "3": "ta",
+        "tamil": "ta",
+        "தமிழ்": "ta",
+        "4": "en",
+        "english": "en",
+    }
+    return mapping.get(cleaned)
 
 
 def should_prompt_language_switch(current_language: str, detected_language: str, text: str) -> bool:
@@ -206,13 +218,8 @@ def should_prompt_language_switch(current_language: str, detected_language: str,
     if tokens and all(token in common_fragment_tokens or token.isdigit() for token in tokens):
         return False
 
-    script_patterns = {
-        "hi": r"[\u0900-\u097F]",
-        "te": r"[\u0C00-\u0C7F]",
-        "ta": r"[\u0B80-\u0BFF]",
-    }
-    if detected_language in script_patterns:
-        return len(re.findall(script_patterns[detected_language], cleaned)) >= 4
+    if detected_language in SCRIPT_PATTERNS:
+        return len(re.findall(SCRIPT_PATTERNS[detected_language], cleaned)) >= 4
 
     # Switching from a non-English language to English should require a stronger signal.
     if detected_language == "en" and current_language != "en":
@@ -220,6 +227,45 @@ def should_prompt_language_switch(current_language: str, detected_language: str,
         return english_letters >= 12 and len(tokens) >= 3
 
     return False
+
+
+def assess_transcript_quality(text: str, expected_language: str | None = None, detected_language: str | None = None) -> dict[str, str | bool]:
+    cleaned = (text or "").strip()
+    if len(cleaned) < 6:
+        return {"is_noisy": True, "reason": "Transcript too short to trust."}
+
+    normalized_expected = normalize_language(expected_language)
+    normalized_detected = normalize_language(detected_language)
+    script_counts = {
+        language: len(re.findall(pattern, cleaned))
+        for language, pattern in SCRIPT_PATTERNS.items()
+    }
+    dominant_script = max(script_counts, key=script_counts.get) if any(script_counts.values()) else "en"
+    dominant_count = script_counts.get(dominant_script, 0)
+
+    # If Whisper says one language but the written script strongly matches another, treat as unreliable.
+    if normalized_detected != "en" and dominant_script != normalized_detected and dominant_count >= 4:
+        return {
+            "is_noisy": True,
+            "reason": f"Transcript script looks closer to {dominant_script} than detected language {normalized_detected}.",
+        }
+
+    # Heuristic for heavily garbled transliteration: too few vowels/spaces in a long utterance is suspicious.
+    ascii_letters = len(re.findall(r"[A-Za-z]", cleaned))
+    if normalized_expected == "en" and ascii_letters >= 8:
+        vowel_count = len(re.findall(r"[aeiouAEIOU]", cleaned))
+        if vowel_count <= 1 and len(cleaned) > 20:
+            return {"is_noisy": True, "reason": "English transcript looks garbled."}
+
+    return {"is_noisy": False, "reason": "Transcript looks usable."}
+
+
+def triage_case(summary_text: str) -> dict[str, str]:
+    urgency_level = infer_urgency(summary_text)
+    return {
+        "urgency_level": urgency_level.upper(),
+        "reason": explain_urgency(summary_text, urgency=urgency_level),
+    }
 
 
 def default_context() -> dict[str, Any]:
@@ -291,23 +337,23 @@ def get_question(index_or_message: int | str, language_or_messages: str | list[d
 
 def infer_urgency(summary_text: str) -> str:
     lowered = (summary_text or "").lower()
-    for keyword in RED_FLAG_PATTERNS["emergency"]:
-        if keyword in lowered:
-            return "emergency"
     for keyword in RED_FLAG_PATTERNS["high"]:
         if keyword in lowered:
             return "high"
+    for keyword in RED_FLAG_PATTERNS["medium"]:
+        if keyword in lowered:
+            return "medium"
 
     try:
         from app.llm.guardrails import check_for_red_flags
 
         is_emergency, _ = check_for_red_flags(summary_text)
         if is_emergency:
-            return "emergency"
+            return "high"
     except Exception:
         pass
 
-    return "routine"
+    return "low"
 
 
 def explain_urgency(summary_text: str, urgency: str | None = None, medical_brief: dict[str, Any] | None = None) -> str:
@@ -316,26 +362,26 @@ def explain_urgency(summary_text: str, urgency: str | None = None, medical_brief
     trigger = next(
         (
             keyword
-            for label in ("emergency", "high")
+            for label in ("high", "medium")
             for keyword in RED_FLAG_PATTERNS[label]
             if keyword in lowered
         ),
         None,
     )
 
-    if resolved_urgency == "emergency":
-        if trigger:
-            return f"Marked emergency because the symptoms include '{trigger}', which needs immediate doctor attention."
-        if medical_brief and medical_brief.get("red_flags_detected"):
-            return "Marked emergency because the clinical summary suggests warning signs that need urgent review."
-        return "Marked emergency because the symptoms suggest an urgent medical risk."
-
     if resolved_urgency == "high":
         if trigger:
-            return f"Marked high priority because the case mentions '{trigger}', which needs quick review."
-        return "Marked high priority because the symptoms may worsen without timely care."
+            return f"Marked HIGH because the symptoms include '{trigger}', which may need immediate doctor attention."
+        if medical_brief and medical_brief.get("red_flags_detected"):
+            return "Marked HIGH because the clinical summary suggests warning signs that need urgent review."
+        return "Marked HIGH because the symptoms suggest an urgent medical risk."
 
-    return "Kept in the routine queue because no emergency warning signs were detected."
+    if resolved_urgency == "medium":
+        if trigger:
+            return f"Marked MEDIUM because the case mentions '{trigger}', which needs quicker review than routine cases."
+        return "Marked MEDIUM because the symptoms may worsen without timely care."
+
+    return "Marked LOW because no emergency warning signs were detected."
 
 
 def infer_specialty(summary_or_brief: str | dict[str, Any]) -> str:
@@ -377,7 +423,7 @@ def _fallback_medical_brief(profile: dict[str, Any], interview_answers: dict[str
         "severity": interview_answers.get("severity", "Not captured"),
         "associated_symptoms": [associated] if associated and associated != "Not captured" else [],
         "patient_narrative": interview_answers.get("chief_complaint", "Not captured"),
-        "red_flags_detected": infer_urgency(" ".join(interview_answers.values())) == "emergency",
+        "red_flags_detected": infer_urgency(" ".join(interview_answers.values())) == "high",
         "preferred_language": get_language_name(profile.get("preferred_language")),
         "history": interview_answers.get("history", "Not captured"),
     }
@@ -424,7 +470,7 @@ def generate_case_summary(profile: dict[str, Any], interview_source: dict[str, s
         f"History/medicines/allergies: {medical_brief.get('history', 'Not captured')}.",
     ]
 
-    urgency = "emergency" if medical_brief.get("red_flags_detected") else infer_urgency(" ".join(summary_lines))
+    urgency = "high" if medical_brief.get("red_flags_detected") else infer_urgency(" ".join(summary_lines))
     specialty = infer_specialty(medical_brief)
     summary_lines.append(f"Urgency: {urgency}.")
     summary_lines.append(f"Urgency reason: {explain_urgency(' '.join(summary_lines), urgency=urgency, medical_brief=medical_brief)}")

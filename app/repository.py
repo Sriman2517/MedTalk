@@ -295,8 +295,8 @@ class Repository:
                 {extra_filter}
                 ORDER BY
                     CASE cases.urgency
-                        WHEN 'emergency' THEN 1
-                        WHEN 'high' THEN 2
+                        WHEN 'high' THEN 1
+                        WHEN 'medium' THEN 2
                         ELSE 3
                     END,
                     cases.created_at ASC

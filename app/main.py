@@ -21,6 +21,7 @@ from app.config import settings
 from app.db import init_db
 from app.repository import Repository
 from app.triage import (
+    assess_transcript_quality,
     build_language_switch_prompt,
     detect_language,
     explain_urgency,
@@ -31,11 +32,11 @@ from app.triage import (
     get_question,
     infer_specialty,
     infer_urgency,
-    is_affirmative_language_switch,
-    is_negative_language_switch,
     load_context,
+    parse_language_switch_choice,
     parse_language_choice,
     should_prompt_language_switch,
+    triage_case,
     translate_for_patient,
 )
 
@@ -198,10 +199,10 @@ def annotate_case(case: dict[str, Any]) -> dict[str, Any]:
     return enriched
 
 
-def transcribe_media_audio(audio_file_path: str) -> str:
-    from app.sensory.transcriber import transcribe_audio
+def transcribe_media_audio_details(audio_file_path: str) -> dict[str, str]:
+    from app.sensory.transcriber import transcribe_audio_details
 
-    return transcribe_audio(audio_file_path)
+    return transcribe_audio_details(audio_file_path)
 
 
 def analyze_media_image(image_path: str) -> str:
@@ -220,9 +221,30 @@ def get_patient_reply_language(phone: str) -> str:
     return conversation.get("language", "en")
 
 
-def handle_patient_message(phone: str, incoming_text: str, message_type: str, media_url: str | None) -> str:
+def build_emergency_patient_alert(language: str) -> str:
+    return translate_for_patient(
+        "Warning. This may be a medical emergency. Do not wait for a reply. Visit the nearest hospital immediately or call 108.",
+        language,
+    )
+
+
+def build_repeat_voice_prompt(language: str) -> str:
+    return translate_for_patient(
+        "I could not clearly understand the voice note. Please say it again slowly or type the symptom in text.",
+        language,
+    )
+
+
+def handle_patient_message(
+    phone: str,
+    incoming_text: str,
+    message_type: str,
+    media_url: str | None,
+    detected_language_override: str | None = None,
+    allow_language_switch_prompt: bool = True,
+) -> str:
     repository.ensure_phone(phone)
-    language = detect_language(incoming_text)
+    language = detected_language_override or detect_language(incoming_text)
     conversation = repository.get_or_create_conversation(phone, language)
     context = load_context(conversation["context_json"])
     profiles = repository.get_profiles(phone)
@@ -355,27 +377,34 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, me
             repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
 
-        choice = safe_int(text)
         temp_symptom = context.get("temp_symptom") or text
-        detected_language = context.get("temp_detected_language") or current_profile["preferred_language"]
+        selected_language = parse_language_switch_choice(text)
+        if not selected_language:
+            reply = build_language_switch_prompt(current_profile["preferred_language"])
+            repository.add_message(conversation["id"], "bot", "text", reply, reply)
+            return reply
 
-        if choice == 1 or is_affirmative_language_switch(text):
-            repository.update_profile(current_profile["id"], detected_language)
-            current_profile["preferred_language"] = detected_language
+        transcript_quality = assess_transcript_quality(temp_symptom, detected_language=selected_language)
+        if bool(transcript_quality["is_noisy"]):
             context["temp_symptom"] = None
             context["temp_detected_language"] = None
-            repository.update_conversation(conversation["id"], stage="interview", language=detected_language, context=context)
-            return handle_patient_message(phone, temp_symptom, "text", media_url)
+            repository.update_conversation(conversation["id"], stage="interview", language=selected_language, context=context)
+            reply = build_repeat_voice_prompt(selected_language)
+            repository.add_message(conversation["id"], "bot", "text", reply, str(transcript_quality["reason"]))
+            return reply
 
-        if choice == 2 or is_negative_language_switch(text):
-            context["temp_symptom"] = None
-            context["temp_detected_language"] = None
-            repository.update_conversation(conversation["id"], stage="interview", context=context)
-            return handle_patient_message(phone, temp_symptom, "text", media_url)
-
-        reply = build_language_switch_prompt(current_profile["preferred_language"], detected_language)
-        repository.add_message(conversation["id"], "bot", "text", reply, reply)
-        return reply
+        repository.update_profile(current_profile["id"], selected_language)
+        context["temp_symptom"] = None
+        context["temp_detected_language"] = None
+        repository.update_conversation(conversation["id"], stage="interview", language=selected_language, context=context)
+        return handle_patient_message(
+            phone,
+            temp_symptom,
+            "text",
+            media_url,
+            detected_language_override=selected_language,
+            allow_language_switch_prompt=False,
+        )
 
     if stage == "interview":
         current_profile = repository.get_profile(conversation["patient_profile_id"])
@@ -385,24 +414,25 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, me
             return reply
 
         preferred_language = current_profile["preferred_language"]
-        if should_prompt_language_switch(preferred_language, language, text) and not context.get("temp_symptom"):
+        if allow_language_switch_prompt and should_prompt_language_switch(preferred_language, language, text) and not context.get("temp_symptom"):
             context["temp_symptom"] = incoming_text
             context["temp_detected_language"] = language
             repository.update_conversation(conversation["id"], stage="confirm_language_switch", context=context)
-            reply = build_language_switch_prompt(preferred_language, language)
+            reply = build_language_switch_prompt(preferred_language)
             repository.add_message(conversation["id"], "bot", "text", reply, reply)
             return reply
 
         english_text = incoming_text if language == "en" else f"[English summary pending] {incoming_text}"
-        if infer_urgency(english_text) == "emergency":
+        if infer_urgency(english_text) == "high":
             gp = repository.get_available_gp()
-            urgency_reason = explain_urgency(english_text, urgency="emergency")
+            triage_result = triage_case(english_text)
+            urgency_reason = triage_result["reason"]
             emergency_summary = "\n".join(
                 [
                     f"Patient: {current_profile['name']}, {current_profile['age']} years, {current_profile['gender']}.",
                     f"Preferred language: {get_language_name(current_profile['preferred_language'])}.",
                     f"Chief complaint: {english_text}.",
-                    "Urgency: emergency.",
+                    f"Urgency: {triage_result['urgency_level'].lower()}.",
                     f"Urgency reason: {urgency_reason}",
                     "Suggested specialty: emergency_medicine.",
                 ]
@@ -411,7 +441,7 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, me
                 conversation["id"],
                 current_profile["id"],
                 emergency_summary,
-                "emergency",
+                triage_result["urgency_level"].lower(),
                 "emergency_medicine",
                 gp["id"] if gp else None,
             )
@@ -423,11 +453,8 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, me
                 context=context,
                 active_case_id=case_id,
             )
-            reply = translate_for_patient(
-                "We have detected a medical emergency. Your case has been escalated immediately to a doctor.",
-                preferred_language,
-            )
-            repository.add_message(conversation["id"], "bot", "text", reply, "We have detected a medical emergency.")
+            reply = build_emergency_patient_alert(preferred_language)
+            repository.add_message(conversation["id"], "bot", "text", reply, "Emergency protocol triggered. Call 108 or visit the nearest hospital immediately.")
             return reply
 
         db_messages = repository.list_messages(conversation["id"])
@@ -435,9 +462,43 @@ def handle_patient_message(phone: str, incoming_text: str, message_type: str, me
         if not reply_english or not reply_english.strip():
             reply_english = "I am having trouble processing that. Can you please repeat?"
 
+        if "[URGENT_RED_FLAG]" in reply_english:
+            gp = repository.get_available_gp()
+            triage_result = triage_case(english_text)
+            urgency_reason = triage_result["reason"]
+            emergency_summary = "\n".join(
+                [
+                    f"Patient: {current_profile['name']}, {current_profile['age']} years, {current_profile['gender']}.",
+                    f"Preferred language: {get_language_name(current_profile['preferred_language'])}.",
+                    f"Chief complaint: {english_text}.",
+                    f"Urgency: {triage_result['urgency_level'].lower()}.",
+                    f"Urgency reason: {urgency_reason}",
+                    "Suggested specialty: emergency_medicine.",
+                ]
+            )
+            case_id = repository.create_case(
+                conversation["id"],
+                current_profile["id"],
+                emergency_summary,
+                triage_result["urgency_level"].lower(),
+                "emergency_medicine",
+                gp["id"] if gp else None,
+            )
+            repository.update_conversation(
+                conversation["id"],
+                stage="queued_for_gp",
+                status="queued_for_gp",
+                language=preferred_language,
+                context=context,
+                active_case_id=case_id,
+            )
+            reply = build_emergency_patient_alert(preferred_language)
+            repository.add_message(conversation["id"], "bot", "text", reply, "Emergency protocol triggered. Call 108 or visit the nearest hospital immediately.")
+            return reply
+
         if "[INTERVIEW_COMPLETE]" in reply_english:
             summary_text, medical_brief = generate_case_summary(current_profile, db_messages)
-            urgency = "emergency" if medical_brief.get("red_flags_detected") else infer_urgency(summary_text)
+            urgency = "high" if medical_brief.get("red_flags_detected") else infer_urgency(summary_text)
             specialty = infer_specialty(medical_brief)
             gp = repository.get_available_gp()
             case_id = repository.create_case(
@@ -599,12 +660,53 @@ async def webhook(
             media_path = await download_twilio_media(MediaUrl0, guessed_suffix, account_sid_override=AccountSid or None)
             if "audio" in media_type:
                 message_type = "audio"
-                transcription = transcribe_media_audio(media_path)
+                transcription_details = transcribe_media_audio_details(media_path)
+                transcription = transcription_details.get("text", "")
+                transcription_language = transcription_details.get("language", "")
+                transcription_provider = transcription_details.get("provider", "")
+                transcription_reason = transcription_details.get("reason", "")
+                if bool(transcription_details.get("is_noisy")):
+                    early_reply_text = build_repeat_voice_prompt(get_patient_reply_language(phone))
+                    incoming_text = ""
+                    debug_log(
+                        "webhook.audio_noisy_provider",
+                        media_path=media_path,
+                        provider=transcription_provider,
+                        transcription=transcription,
+                        transcription_language=transcription_language,
+                        reason=transcription_reason,
+                    )
+                    form["DetectedAudioLanguage"] = transcription_language
+                    raise RuntimeError(transcription_reason or "Transcription marked noisy by provider.")
+                transcript_quality = assess_transcript_quality(
+                    transcription,
+                    detected_language=transcription_language,
+                )
+                if bool(transcript_quality["is_noisy"]):
+                    early_reply_text = build_repeat_voice_prompt(get_patient_reply_language(phone))
+                    incoming_text = ""
+                    debug_log(
+                        "webhook.audio_noisy",
+                        media_path=media_path,
+                        transcription=transcription,
+                        transcription_language=transcription_language,
+                        reason=transcript_quality["reason"],
+                    )
+                    form["DetectedAudioLanguage"] = transcription_language
+                    raise RuntimeError(str(transcript_quality["reason"]))
                 if incoming_text and transcription:
                     incoming_text = f"{incoming_text}\n[Voice note transcript: {transcription}]"
                 else:
                     incoming_text = transcription or incoming_text or "Voice note received"
-                debug_log("webhook.audio_processed", media_path=media_path, transcription=transcription)
+                if transcription_language:
+                    form["DetectedAudioLanguage"] = transcription_language
+                debug_log(
+                    "webhook.audio_processed",
+                    media_path=media_path,
+                    provider=transcription_provider,
+                    transcription=transcription,
+                    transcription_language=transcription_language,
+                )
             elif "image" in media_type:
                 message_type = "image"
                 analysis = analyze_media_image(media_path)
@@ -619,11 +721,12 @@ async def webhook(
             debug_log("webhook.media_processing_failed", media_type=MediaContentType0, media_url=MediaUrl0, error=str(exc))
             if "audio" in media_type:
                 message_type = "audio"
-                reply_language = get_patient_reply_language(phone)
-                early_reply_text = translate_for_patient(
-                    "I received your voice note, but I could not transcribe it. Please send it again or type the symptom in text.",
-                    reply_language,
-                )
+                if not early_reply_text:
+                    reply_language = get_patient_reply_language(phone)
+                    early_reply_text = translate_for_patient(
+                        "I received your voice note, but I could not transcribe it. Please send it again or type the symptom in text.",
+                        reply_language,
+                    )
                 incoming_text = ""
             elif "image" in media_type:
                 message_type = "image"
@@ -639,7 +742,13 @@ async def webhook(
         reply_text = early_reply_text
         debug_log("webhook.early_reply", phone=phone, reply_text=reply_text)
     else:
-        reply_text = handle_patient_message(phone, incoming_text, message_type, media_path)
+        reply_text = handle_patient_message(
+            phone,
+            incoming_text,
+            message_type,
+            media_path,
+            detected_language_override=form.get("DetectedAudioLanguage"),
+        )
     if not reply_text or not reply_text.strip():
         reply_text = "I am having trouble processing that. Please send RESET to restart."
 
@@ -649,7 +758,8 @@ async def webhook(
         debug_log("webhook.text_only_reply", reply_text=reply_text)
     else:
         try:
-            conversation = repository.get_or_create_conversation(phone, detect_language(incoming_text))
+            detected_language = form.get("DetectedAudioLanguage") or detect_language(incoming_text)
+            conversation = repository.get_or_create_conversation(phone, detected_language)
             voice_language = conversation.get("language", "en")
             audio_url = generate_real_audio(reply_text, voice_language)
             public_audio_url = build_public_media_url(audio_url)
