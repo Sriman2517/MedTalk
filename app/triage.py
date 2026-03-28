@@ -10,8 +10,12 @@ from typing import Any
 SUPPORTED_LANGUAGES = {
     "en": "English",
     "hi": "Hindi",
+    "bn": "Bengali",
     "te": "Telugu",
+    "mr": "Marathi",
     "ta": "Tamil",
+    "kn": "Kannada",
+    "ur": "Urdu",
 }
 
 LANGUAGE_ALIASES = {
@@ -19,10 +23,19 @@ LANGUAGE_ALIASES = {
     "en": "en",
     "hindi": "hi",
     "hi": "hi",
+    "bengali": "bn",
+    "bangla": "bn",
+    "bn": "bn",
     "telugu": "te",
     "te": "te",
+    "marathi": "mr",
+    "mr": "mr",
     "tamil": "ta",
     "ta": "ta",
+    "kannada": "kn",
+    "kn": "kn",
+    "urdu": "ur",
+    "ur": "ur",
 }
 
 NATIVE_LANGUAGE_NAMES = {
@@ -194,6 +207,111 @@ def parse_language_switch_choice(text: str) -> str | None:
         "தமிழ்": "ta",
         "4": "en",
         "english": "en",
+    }
+    return mapping.get(cleaned)
+
+
+NATIVE_LANGUAGE_NAMES.update(
+    {
+        "hi": "हिंदी",
+        "bn": "বাংলা",
+        "te": "తెలుగు",
+        "mr": "मराठी",
+        "ta": "தமிழ்",
+        "kn": "ಕನ್ನಡ",
+        "ur": "اردو",
+    }
+)
+
+
+def friendly_language_list() -> str:
+    return (
+        "🗣️ Please choose your language:\n"
+        "1️⃣ हिंदी (Hindi)\n"
+        "2️⃣ తెలుగు (Telugu)\n"
+        "3️⃣ தமிழ் (Tamil)\n"
+        "4️⃣ English\n"
+        "5️⃣ বাংলা (Bengali)\n"
+        "6️⃣ मराठी (Marathi)\n"
+        "7️⃣ ಕನ್ನಡ (Kannada)\n"
+        "8️⃣ اردو (Urdu)"
+    )
+
+
+def parse_language_choice(text: str) -> str | None:
+    cleaned = (text or "").strip().lower()
+    mapping = {
+        "1": "hi",
+        "hindi": "hi",
+        "हिंदी": "hi",
+        "2": "te",
+        "telugu": "te",
+        "తెలుగు": "te",
+        "3": "ta",
+        "tamil": "ta",
+        "தமிழ்": "ta",
+        "4": "en",
+        "english": "en",
+        "5": "bn",
+        "bengali": "bn",
+        "bangla": "bn",
+        "বাংলা": "bn",
+        "6": "mr",
+        "marathi": "mr",
+        "मराठी": "mr",
+        "7": "kn",
+        "kannada": "kn",
+        "ಕನ್ನಡ": "kn",
+        "8": "ur",
+        "urdu": "ur",
+        "اردو": "ur",
+    }
+    return mapping.get(cleaned)
+
+
+def build_language_switch_prompt(current_language: str) -> str:
+    current_language = normalize_language(current_language)
+    intro = LANGUAGE_MENU_PROMPTS.get(current_language, LANGUAGE_MENU_PROMPTS["en"])
+    return (
+        f"🔄 {intro}\n\n"
+        "1 - हिंदी (Hindi)\n"
+        "2 - తెలుగు (Telugu)\n"
+        "3 - தமிழ் (Tamil)\n"
+        "4 - English\n"
+        "5 - বাংলা (Bengali)\n"
+        "6 - मराठी (Marathi)\n"
+        "7 - ಕನ್ನಡ (Kannada)\n"
+        "8 - اردو (Urdu)"
+    )
+
+
+def parse_language_switch_choice(text: str) -> str | None:
+    cleaned = (text or "").strip().lower()
+    mapping = {
+        "1": "hi",
+        "hindi": "hi",
+        "हिंदी": "hi",
+        "2": "te",
+        "telugu": "te",
+        "తెలుగు": "te",
+        "3": "ta",
+        "tamil": "ta",
+        "தமிழ்": "ta",
+        "4": "en",
+        "english": "en",
+        "5": "bn",
+        "bengali": "bn",
+        "bangla": "bn",
+        "বাংলা": "bn",
+        "6": "mr",
+        "marathi": "mr",
+        "मराठी": "mr",
+        "7": "kn",
+        "kannada": "kn",
+        "ಕನ್ನಡ": "kn",
+        "8": "ur",
+        "urdu": "ur",
+        "اردو": "ur",
     }
     return mapping.get(cleaned)
 

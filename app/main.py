@@ -113,18 +113,30 @@ def send_whatsapp_message(to_phone: str, body: str, media_url: str | None = None
         raise RuntimeError("Twilio credentials are not fully configured for outbound WhatsApp messaging.")
 
     client = Client(account_sid, auth_token)
-    payload: dict[str, Any] = {
+    text_payload: dict[str, Any] = {
         "from_": from_number,
         "to": f"whatsapp:{to_phone}",
         "body": body,
     }
-    if media_url:
-        payload["media_url"] = [media_url]
-
-    debug_log("send_whatsapp_message.start", to=payload["to"], media_url=media_url)
-    message = client.messages.create(**payload)
-    debug_log("send_whatsapp_message.done", sid=message.sid, status=getattr(message, "status", None))
-    return str(message.sid)
+    debug_log("send_whatsapp_message.start", to=text_payload["to"], media_url=media_url)
+    text_message = client.messages.create(**text_payload)
+    media_message_sid = None
+    if media_url and not TEXT_ONLY_WHATSAPP_REPLIES:
+        media_payload: dict[str, Any] = {
+            "from_": from_number,
+            "to": f"whatsapp:{to_phone}",
+            "body": "Voice reply",
+            "media_url": [media_url],
+        }
+        media_message = client.messages.create(**media_payload)
+        media_message_sid = getattr(media_message, "sid", None)
+    debug_log(
+        "send_whatsapp_message.done",
+        sid=text_message.sid,
+        media_sid=media_message_sid,
+        status=getattr(text_message, "status", None),
+    )
+    return str(text_message.sid)
 
 
 def profile_menu(profiles: list[dict[str, Any]]) -> str:
@@ -987,7 +999,7 @@ async def webhook(
         reply_text = "I am having trouble processing that. Please send RESET to restart."
 
     twiml = MessagingResponse()
-    message = twiml.message(reply_text)
+    twiml.message(reply_text)
     if TEXT_ONLY_WHATSAPP_REPLIES:
         debug_log("webhook.text_only_reply", reply_text=reply_text)
     else:
@@ -998,7 +1010,8 @@ async def webhook(
             audio_url = generate_real_audio(reply_text, voice_language)
             public_audio_url = build_public_media_url(audio_url)
             if public_audio_url:
-                message.media(public_audio_url)
+                media_message = twiml.message("Voice reply")
+                media_message.media(public_audio_url)
             debug_log("webhook.tts_ready", voice_language=voice_language, audio_url=audio_url, public_audio_url=public_audio_url)
         except Exception as exc:
             debug_log("webhook.tts_failed", error=str(exc))
